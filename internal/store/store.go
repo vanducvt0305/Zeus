@@ -7,6 +7,7 @@ import (
 	"context"
 
 	"github.com/vanducvt0305/zeus/internal/model"
+	"github.com/vanducvt0305/zeus/internal/sparse"
 )
 
 // Kind distinguishes the two granularities at which an MCP is indexed.
@@ -23,13 +24,15 @@ const (
 	KindQuery Kind = "query"
 )
 
-// Record is a single point to upsert: a vector plus the MCP it belongs to.
+// Record is a single point to upsert: the dense and sparse vectors for a piece
+// of an MCP, plus the MCP it belongs to.
 type Record struct {
-	Kind     Kind      // server-, tool- or query-level
-	ToolName string    // set when Kind == KindTool
-	Query    string    // set when Kind == KindQuery
-	Vector   []float32 // embedding, len == Embedder.Dim()
-	MCP      model.MCP // full record, stored as payload for retrieval
+	Kind     Kind          // server-, tool- or query-level
+	ToolName string        // set when Kind == KindTool
+	Query    string        // set when Kind == KindQuery
+	Vector   []float32     // dense embedding, len == Embedder.Dim()
+	Sparse   sparse.Vector // sparse keyword vector (may be empty)
+	MCP      model.MCP     // full record, stored as payload for retrieval
 }
 
 // discriminator is the per-MCP sub-key that makes a point id unique and stable
@@ -59,15 +62,25 @@ type Hit struct {
 	ToolName  string // the matched tool, when MatchKind == KindTool
 }
 
+// SearchQuery is one search request. When Sparse is non-empty, retrieval runs
+// hybrid (dense + sparse) with Reciprocal Rank Fusion; otherwise it is
+// dense-only.
+type SearchQuery struct {
+	Dense  []float32     // dense query embedding
+	Sparse sparse.Vector // sparse query vector; empty => dense-only
+	TopK   int           // number of distinct MCPs to return
+	Filter Filter
+}
+
 // Store is the persistence backend for indexed MCPs.
 type Store interface {
-	// EnsureCollection creates the collection for the given vector dimension if
-	// it does not already exist. It is safe to call repeatedly.
+	// EnsureCollection creates the collection (named dense + sparse vectors) for
+	// the given dense dimension if it does not already exist. Safe to repeat.
 	EnsureCollection(ctx context.Context, dim int) error
 	// Upsert inserts or replaces the given records.
 	Upsert(ctx context.Context, records []Record) error
-	// Search returns up to topK distinct MCPs ranked by similarity to vec.
-	Search(ctx context.Context, vec []float32, topK int, filter Filter) ([]Hit, error)
+	// Search returns up to q.TopK distinct MCPs ranked by relevance.
+	Search(ctx context.Context, q SearchQuery) ([]Hit, error)
 	// Get returns the MCP with the given id, or (nil, nil) if not found.
 	Get(ctx context.Context, id string) (*model.MCP, error)
 	// Categories returns the distinct categories present in the store.

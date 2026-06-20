@@ -13,6 +13,7 @@ import (
 	"github.com/vanducvt0305/zeus/internal/enrich"
 	"github.com/vanducvt0305/zeus/internal/model"
 	"github.com/vanducvt0305/zeus/internal/source"
+	"github.com/vanducvt0305/zeus/internal/sparse"
 	"github.com/vanducvt0305/zeus/internal/store"
 )
 
@@ -21,6 +22,7 @@ type Indexer struct {
 	Source   source.Source
 	Enricher enrich.Enricher
 	Embedder embed.Embedder
+	Sparse   sparse.Encoder
 	Store    store.Store
 
 	// BatchSize bounds how many texts are embedded per request.
@@ -28,12 +30,12 @@ type Indexer struct {
 }
 
 // New builds an Indexer with sensible defaults. A nil enricher means no
-// enrichment is applied.
-func New(src source.Source, enr enrich.Enricher, emb embed.Embedder, st store.Store) *Indexer {
+// enrichment is applied; a nil sparse encoder means dense-only points.
+func New(src source.Source, enr enrich.Enricher, emb embed.Embedder, sp sparse.Encoder, st store.Store) *Indexer {
 	if enr == nil {
 		enr = enrich.Noop{}
 	}
-	return &Indexer{Source: src, Enricher: enr, Embedder: emb, Store: st, BatchSize: 64}
+	return &Indexer{Source: src, Enricher: enr, Embedder: emb, Sparse: sp, Store: st, BatchSize: 64}
 }
 
 // Run fetches up to limit MCPs from the source and indexes them. A limit <= 0
@@ -76,6 +78,9 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 		for i := range batch {
 			records[i] = batch[i].rec
 			records[i].Vector = vectors[i]
+			if ix.Sparse != nil {
+				records[i].Sparse = ix.Sparse.Encode(batch[i].text)
+			}
 		}
 		if err := ix.Store.Upsert(ctx, records); err != nil {
 			return indexed, fmt.Errorf("upserting batch: %w", err)

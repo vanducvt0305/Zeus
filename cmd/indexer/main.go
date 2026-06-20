@@ -44,7 +44,7 @@ func main() {
 	}
 
 	src := source.NewRegistry(cfg.RegistryURL)
-	ix := index.New(src, enr, emb, st)
+	ix := index.New(src, enr, emb, cfg.NewSparseEncoder(), st)
 
 	log.Printf("indexing (enricher=%s, embedder=%s, dim=%d, collection=%s)", enr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)
 	n, err := ix.Run(context.Background(), *limit)

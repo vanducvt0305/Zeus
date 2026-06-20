@@ -27,11 +27,13 @@ index: build
 eval: build
 	./bin/eval -index -fails
 
-# Compare baseline (no enrichment) vs heuristic enrichment on the fixtures,
-# each in its own collection. Requires Qdrant running.
+# Ablation: index once (sparse vectors are always stored), then score the same
+# collection with retrieval features toggled at query time. Requires Qdrant.
 eval-compare: build
-	@echo "=== ENRICHER=none ===";      ENRICHER=none      QDRANT_COLLECTION=eval_none      ./bin/eval -index
-	@echo "=== ENRICHER=heuristic ==="; ENRICHER=heuristic QDRANT_COLLECTION=eval_heuristic ./bin/eval -index
+	@QDRANT_COLLECTION=eval_ablation ENRICHER=heuristic ./bin/eval -index >/dev/null
+	@echo "1) dense-only, no rerank :"; QDRANT_COLLECTION=eval_ablation HYBRID=false RERANKER=none    ./bin/eval | grep -E "Hit@1|Recall|MRR|nDCG"
+	@echo "2) +hybrid (dense+sparse):"; QDRANT_COLLECTION=eval_ablation HYBRID=true  RERANKER=none    ./bin/eval | grep -E "Hit@1|Recall|MRR|nDCG"
+	@echo "3) +hybrid +rerank       :"; QDRANT_COLLECTION=eval_ablation HYBRID=true  RERANKER=lexical ./bin/eval | grep -E "Hit@1|Recall|MRR|nDCG"
 
 tidy:
 	go mod tidy

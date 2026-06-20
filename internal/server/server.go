@@ -8,14 +8,14 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/vanducvt0305/zeus/internal/embed"
 	"github.com/vanducvt0305/zeus/internal/model"
+	"github.com/vanducvt0305/zeus/internal/search"
 	"github.com/vanducvt0305/zeus/internal/store"
 )
 
 // New builds the MCP discovery server, registering its tools.
-func New(name, version string, emb embed.Embedder, st store.Store) *mcp.Server {
-	s := &service{emb: emb, store: st}
+func New(name, version string, svc *search.Service) *mcp.Server {
+	s := &service{svc: svc}
 	srv := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -40,8 +40,7 @@ func New(name, version string, emb embed.Embedder, st store.Store) *mcp.Server {
 }
 
 type service struct {
-	emb   embed.Embedder
-	store store.Store
+	svc *search.Service
 }
 
 // ---- search_mcp ----
@@ -78,12 +77,7 @@ func (s *service) searchMCP(ctx context.Context, _ *mcp.CallToolRequest, in Sear
 		topK = 5
 	}
 
-	vecs, err := s.emb.Embed(ctx, []string{in.Query})
-	if err != nil {
-		return nil, SearchOutput{}, fmt.Errorf("embedding query: %w", err)
-	}
-
-	hits, err := s.store.Search(ctx, vecs[0], topK, store.Filter{
+	hits, err := s.svc.Search(ctx, in.Query, topK, store.Filter{
 		Categories: in.Categories,
 		Source:     in.Source,
 	})
@@ -100,7 +94,7 @@ func (s *service) searchMCP(ctx context.Context, _ *mcp.CallToolRequest, in Sear
 			Description: h.MCP.Description,
 			Score:       h.Score,
 			MatchedTool: h.ToolName,
-			Categories:  h.MCP.Categories,
+			Categories:  h.MCP.AllCategories(),
 			Repository:  h.MCP.Repository,
 			Source:      h.MCP.Source,
 		})
@@ -123,7 +117,7 @@ func (s *service) getMCPDetails(ctx context.Context, _ *mcp.CallToolRequest, in 
 	if in.ID == "" {
 		return nil, DetailsOutput{}, fmt.Errorf("id must not be empty")
 	}
-	m, err := s.store.Get(ctx, in.ID)
+	m, err := s.svc.Store.Get(ctx, in.ID)
 	if err != nil {
 		return nil, DetailsOutput{}, err
 	}
@@ -142,7 +136,7 @@ type CategoriesOutput struct {
 }
 
 func (s *service) listCategories(ctx context.Context, _ *mcp.CallToolRequest, _ CategoriesInput) (*mcp.CallToolResult, CategoriesOutput, error) {
-	cats, err := s.store.Categories(ctx)
+	cats, err := s.svc.Store.Categories(ctx)
 	if err != nil {
 		return nil, CategoriesOutput{}, err
 	}

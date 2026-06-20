@@ -18,18 +18,15 @@ func main() {
 
 	cfg := config.Load()
 
-	emb, err := cfg.NewEmbedder()
+	svc, err := cfg.NewSearchService()
 	if err != nil {
-		log.Fatalf("embedder: %v", err)
-	}
-	st, err := cfg.NewStore()
-	if err != nil {
-		log.Fatalf("store: %v", err)
+		log.Fatalf("search service: %v", err)
 	}
 
-	log.Printf("starting MCP discovery server (embedder=%s, collection=%s)", emb.Name(), cfg.QdrantCollection)
+	log.Printf("starting MCP discovery server (embedder=%s, hybrid=%t, reranker=%s, collection=%s)",
+		svc.Embedder.Name(), cfg.Hybrid, cfg.Reranker, cfg.QdrantCollection)
 
-	srv := server.New("zeus-mcp-discovery", "0.1.0", emb, st)
+	srv := server.New("zeus-mcp-discovery", "0.1.0", svc)
 	if err := srv.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}

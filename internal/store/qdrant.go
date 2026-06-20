@@ -11,6 +11,13 @@ import (
 	"github.com/vanducvt0305/zeus/internal/model"
 )
 
+// Named vectors in the collection: one dense (semantic) and one sparse
+// (keyword). Hybrid search fuses results from both.
+const (
+	denseVector  = "dense"
+	sparseVector = "sparse"
+)
+
 // payloadKey constants are the Qdrant payload fields we set on every point.
 const (
 	fieldMCPID      = "mcp_id"
@@ -52,9 +59,11 @@ func (q *Qdrant) EnsureCollection(ctx context.Context, dim int) error {
 	}
 	return q.client.CreateCollection(ctx, &qdrant.CreateCollection{
 		CollectionName: q.collection,
-		VectorsConfig: qdrant.NewVectorsConfig(&qdrant.VectorParams{
-			Size:     uint64(dim),
-			Distance: qdrant.Distance_Cosine,
+		VectorsConfig: qdrant.NewVectorsConfigMap(map[string]*qdrant.VectorParams{
+			denseVector: {Size: uint64(dim), Distance: qdrant.Distance_Cosine},
+		}),
+		SparseVectorsConfig: qdrant.NewSparseVectorsConfig(map[string]*qdrant.SparseVectorParams{
+			sparseVector: {},
 		}),
 	})
 }
@@ -82,9 +91,15 @@ func (q *Qdrant) Upsert(ctx context.Context, records []Record) error {
 			fieldCategories: cats,
 			fieldMCPJSON:    string(raw),
 		}
+		vectors := map[string]*qdrant.Vector{
+			denseVector: qdrant.NewVector(r.Vector...),
+		}
+		if !r.Sparse.Empty() {
+			vectors[sparseVector] = qdrant.NewVectorSparse(r.Sparse.Indices, r.Sparse.Values)
+		}
 		points = append(points, &qdrant.PointStruct{
 			Id:      qdrant.NewID(pointID(r.MCP.ID, r.Kind, r.discriminator())),
-			Vectors: qdrant.NewVectors(r.Vector...),
+			Vectors: qdrant.NewVectorsMap(vectors),
 			Payload: qdrant.NewValueMap(payload),
 		})
 	}
@@ -98,20 +113,52 @@ func (q *Qdrant) Upsert(ctx context.Context, records []Record) error {
 	return nil
 }
 
-func (q *Qdrant) Search(ctx context.Context, vec []float32, topK int, filter Filter) ([]Hit, error) {
+func (q *Qdrant) Search(ctx context.Context, sq SearchQuery) ([]Hit, error) {
+	topK := sq.TopK
 	if topK <= 0 {
 		topK = 10
 	}
-	// Over-fetch: a single MCP can match via several tool points plus its
+	// Over-fetch: a single MCP can match via several tool/query points plus its
 	// server point, so we ask for more and then collapse to distinct MCPs.
 	limit := uint64(topK*4 + 10)
-	points, err := q.client.Query(ctx, &qdrant.QueryPoints{
+	filter := buildFilter(sq.Filter)
+
+	req := &qdrant.QueryPoints{
 		CollectionName: q.collection,
-		Query:          qdrant.NewQuery(vec...),
 		Limit:          &limit,
-		Filter:         buildFilter(filter),
+		Filter:         filter,
 		WithPayload:    qdrant.NewWithPayload(true),
-	})
+	}
+
+	if sq.Sparse.Empty() {
+		// Dense-only retrieval.
+		using := denseVector
+		req.Query = qdrant.NewQueryNearest(qdrant.NewVectorInput(sq.Dense...))
+		req.Using = &using
+	} else {
+		// Hybrid: run a dense and a sparse prefetch, then fuse with Reciprocal
+		// Rank Fusion. RRF combines by rank, so the two scoring scales don't
+		// need to be comparable.
+		prefetchLimit := uint64(topK*8 + 20)
+		denseUsing, sparseUsing := denseVector, sparseVector
+		req.Prefetch = []*qdrant.PrefetchQuery{
+			{
+				Query:  qdrant.NewQueryNearest(qdrant.NewVectorInput(sq.Dense...)),
+				Using:  &denseUsing,
+				Limit:  &prefetchLimit,
+				Filter: filter,
+			},
+			{
+				Query:  qdrant.NewQueryNearest(qdrant.NewVectorInputSparse(sq.Sparse.Indices, sq.Sparse.Values)),
+				Using:  &sparseUsing,
+				Limit:  &prefetchLimit,
+				Filter: filter,
+			},
+		}
+		req.Query = qdrant.NewQueryFusion(qdrant.Fusion_RRF)
+	}
+
+	points, err := q.client.Query(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("querying: %w", err)
 	}

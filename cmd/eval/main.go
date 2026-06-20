@@ -25,6 +25,14 @@ import (
 	"github.com/vanducvt0305/zeus/internal/store"
 )
 
+// top returns the first n elements (or fewer).
+func top(ss []string, n int) []string {
+	if len(ss) > n {
+		return ss[:n]
+	}
+	return ss
+}
+
 func main() {
 	log.SetPrefix("zeus-eval: ")
 	log.SetFlags(0)
@@ -39,13 +47,9 @@ func main() {
 	ctx := context.Background()
 	cfg := config.Load()
 
-	emb, err := cfg.NewEmbedder()
+	svc, err := cfg.NewSearchService()
 	if err != nil {
-		log.Fatalf("embedder: %v", err)
-	}
-	st, err := cfg.NewStore()
-	if err != nil {
-		log.Fatalf("store: %v", err)
+		log.Fatalf("search service: %v", err)
 	}
 
 	if *doIndex {
@@ -53,8 +57,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("enricher: %v", err)
 		}
-		ix := index.New(source.NewFile(*fixtures), enr, emb, st)
-		log.Printf("indexing fixtures (enricher=%s, embedder=%s, collection=%s)...", enr.Name(), emb.Name(), cfg.QdrantCollection)
+		ix := index.New(source.NewFile(*fixtures), enr, svc.Embedder, cfg.NewSparseEncoder(), svc.Store)
+		log.Printf("indexing fixtures (enricher=%s, embedder=%s, collection=%s)...", enr.Name(), svc.Embedder.Name(), cfg.QdrantCollection)
 		if _, err := ix.Run(ctx, 0); err != nil {
 			log.Fatalf("indexing fixtures: %v", err)
 		}
@@ -65,13 +69,9 @@ func main() {
 		log.Fatalf("golden: %v", err)
 	}
 
-	// Ranking: embed the query, search the store, return MCP IDs best-first.
+	// Ranking goes through the exact pipeline the server uses.
 	rank := func(ctx context.Context, query string, topK int) ([]string, error) {
-		vecs, err := emb.Embed(ctx, []string{query})
-		if err != nil {
-			return nil, err
-		}
-		hits, err := st.Search(ctx, vecs[0], topK, store.Filter{})
+		hits, err := svc.Search(ctx, query, topK, store.Filter{})
 		if err != nil {
 			return nil, err
 		}
@@ -87,7 +87,8 @@ func main() {
 		log.Fatalf("eval: %v", err)
 	}
 
-	fmt.Printf("\n=== Zeus search quality (enricher=%s, embedder=%s, collection=%s) ===\n", cfg.Enricher, emb.Name(), cfg.QdrantCollection)
+	fmt.Printf("\n=== Zeus search quality (enricher=%s, embedder=%s, hybrid=%t, reranker=%s, collection=%s) ===\n",
+		cfg.Enricher, svc.Embedder.Name(), cfg.Hybrid, cfg.Reranker, cfg.QdrantCollection)
 	fmt.Println(rep.String())
 
 	if *showFails {
@@ -106,11 +107,4 @@ func main() {
 		}
 	}
 	fmt.Println()
-}
-
-func top(ss []string, n int) []string {
-	if len(ss) > n {
-		return ss[:n]
-	}
-	return ss
 }

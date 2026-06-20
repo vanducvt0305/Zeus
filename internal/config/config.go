@@ -12,6 +12,9 @@ import (
 	"github.com/vanducvt0305/zeus/internal/embed"
 	"github.com/vanducvt0305/zeus/internal/enrich"
 	"github.com/vanducvt0305/zeus/internal/llm"
+	"github.com/vanducvt0305/zeus/internal/rerank"
+	"github.com/vanducvt0305/zeus/internal/search"
+	"github.com/vanducvt0305/zeus/internal/sparse"
 	"github.com/vanducvt0305/zeus/internal/store"
 )
 
@@ -33,11 +36,20 @@ type Config struct {
 	// Enricher selection: "heuristic" (offline default), "llm", or "none".
 	Enricher string
 
-	// LLM settings, used when Enricher == "llm".
+	// LLM settings, used when Enricher == "llm" or Reranker == "llm".
 	LLMProvider string // "anthropic" or "openai"
 	LLMBaseURL  string
 	LLMAPIKey   string
 	LLMModel    string
+
+	// Hybrid enables sparse (keyword) retrieval fused with dense at query time.
+	Hybrid bool
+
+	// Reranker selection: "lexical" (offline default), "llm", or "none".
+	Reranker string
+	// RerankPool is how many first-stage candidates to rerank before truncating
+	// to the requested top-k.
+	RerankPool int
 
 	RegistryURL string
 }
@@ -64,7 +76,34 @@ func Load() Config {
 		LLMAPIKey:   env("LLM_API_KEY", ""),
 		LLMModel:    env("LLM_MODEL", "claude-haiku-4-5"),
 
+		Hybrid:     envBool("HYBRID", true),
+		Reranker:   env("RERANKER", "lexical"),
+		RerankPool: envInt("RERANK_POOL", 30),
+
 		RegistryURL: env("REGISTRY_URL", ""),
+	}
+}
+
+// NewSparseEncoder builds the sparse (keyword) encoder used for hybrid search.
+func (c Config) NewSparseEncoder() sparse.Encoder {
+	return sparse.Lexical{}
+}
+
+// NewReranker builds the configured reranker.
+func (c Config) NewReranker() (rerank.Reranker, error) {
+	switch c.Reranker {
+	case "", "lexical":
+		return rerank.Lexical{}, nil
+	case "none", "noop":
+		return rerank.Noop{}, nil
+	case "llm":
+		client, err := c.newLLMClient()
+		if err != nil {
+			return nil, err
+		}
+		return rerank.NewLLM(client), nil
+	default:
+		return nil, fmt.Errorf("unknown RERANKER %q (want \"lexical\", \"llm\" or \"none\")", c.Reranker)
 	}
 }
 
@@ -120,6 +159,31 @@ func (c Config) NewStore() (store.Store, error) {
 	return store.NewQdrant(c.QdrantHost, c.QdrantPort, c.QdrantAPIKey, c.QdrantCollection)
 }
 
+// NewSearchService assembles the full query-time pipeline (embedder, sparse
+// encoder, store, reranker) from configuration.
+func (c Config) NewSearchService() (*search.Service, error) {
+	emb, err := c.NewEmbedder()
+	if err != nil {
+		return nil, err
+	}
+	st, err := c.NewStore()
+	if err != nil {
+		return nil, err
+	}
+	rr, err := c.NewReranker()
+	if err != nil {
+		return nil, err
+	}
+	return &search.Service{
+		Embedder: emb,
+		Sparse:   c.NewSparseEncoder(),
+		Store:    st,
+		Reranker: rr,
+		Hybrid:   c.Hybrid,
+		Pool:     c.RerankPool,
+	}, nil
+}
+
 func env(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
@@ -131,6 +195,15 @@ func envInt(key string, def int) int {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return def

@@ -29,10 +29,13 @@ agent can call to discover capabilities at runtime. Think of it as
 │    • search_mcp(query, top_k, categories…)    │
 │    • get_mcp_details(id)                       │
 │    • list_categories()                         │
+│  query pipeline:                              │
+│    embed → hybrid retrieve (dense+sparse,RRF) │
+│         → rerank shortlist → top-k            │
 └─────────────────────────────────────────────┘
 ```
 
-Three design choices make matching sharper:
+Four design choices make matching sharper:
 
 - **Enrichment / capability cards (the biggest lever).** Search quality is
   bounded by how well each MCP is *represented*. Before indexing, every MCP is
@@ -45,9 +48,14 @@ Three design choices make matching sharper:
   synthetic example query). Agent queries are usually tool/task-shaped, so the
   finer-grained vectors match more precisely. Search collapses results back to
   one entry per MCP, keeping the best score.
-- **Pluggable everything.** The indexer and server share `Embedder`, `Enricher`,
-  and `Store` interfaces, so the embedding model, enrichment strategy, and
-  vector backend are config switches, not code changes.
+- **Hybrid retrieval + reranking.** Each point carries a dense (semantic) and a
+  sparse (keyword) vector. Search fuses both with Reciprocal Rank Fusion — dense
+  catches meaning, sparse catches exact tool names and technical terms — then a
+  reranker re-scores the shortlist by reading each candidate jointly with the
+  query. This is the classic retrieve-then-rerank pattern.
+- **Pluggable everything.** The pieces share `Embedder`, `Enricher`, `Store`,
+  and `Reranker` interfaces, so the embedding model, enrichment strategy, vector
+  backend, and reranker are config switches, not code changes.
 
 ## Project layout
 
@@ -62,11 +70,14 @@ internal/
   enrich/      Enricher interface + heuristic (offline) + LLM capability cards
   llm/         Client interface + Anthropic + OpenAI-compatible chat
   embed/       Embedder interface + hash (offline) + OpenAI-compatible impls
-  store/       Store interface + Qdrant implementation (server/tool/query points)
-  index/       indexer: source → enrich → embed → store
+  sparse/      sparse keyword encoder for hybrid search
+  store/       Store interface + Qdrant impl (named dense+sparse, RRF fusion)
+  rerank/      Reranker interface + lexical (offline) + LLM reranker
+  search/      query pipeline: embed → hybrid retrieve → rerank → top-k
+  index/       indexer: source → enrich → embed(+sparse) → store
   server/      the three MCP tools
   eval/        IR metrics (Hit@1, Recall@k, MRR, nDCG@k) + runner
-  config/      env-driven config; builds enricher + embedder + store
+  config/      env-driven config; builds the whole pipeline
 eval/
   fixtures/    a fixed MCP catalog for reproducible evaluation
   golden.json  labeled (query → expected MCP) pairs
@@ -138,6 +149,23 @@ export LLM_MODEL=claude-haiku-4-5   # fast + cheap is ideal for this batch job
 make index LIMIT=200
 ```
 
+## Retrieval pipeline
+
+At query time (`internal/search`):
+
+1. **Embed** the query (dense) and, for hybrid, encode it as a sparse keyword
+   vector.
+2. **Retrieve** a candidate pool. With `HYBRID=true`, a dense prefetch and a
+   sparse prefetch are fused with **Reciprocal Rank Fusion** in Qdrant; RRF
+   combines by rank, so the two score scales need not be comparable.
+3. **Rerank** the pool — the `lexical` reranker scores query-term coverage over
+   each candidate's full capability text; the `llm` reranker asks a model to
+   order the shortlist.
+4. **Truncate** to `top_k`.
+
+Sparse vectors are always stored, so `HYBRID` and `RERANKER` can be changed at
+query time without re-indexing. Tune the shortlist size with `RERANK_POOL`.
+
 ## Evaluation
 
 You can't improve what you don't measure. `cmd/eval` runs a golden set of
@@ -149,20 +177,29 @@ reproducible and don't drift with the live registry.
 ```bash
 make qdrant-up
 make eval            # index fixtures + score, with the misses listed
-
-# Quantify the effect of enrichment — each config in its own collection:
-make eval-compare
+make eval-compare    # ablation: dense-only → +hybrid → +hybrid+rerank
 ```
 
-The harness is the point: every change to enrichment, embedding, or retrieval
-should be judged by these numbers, not by eyeballing a few queries.
+Ablation on the fixtures (offline `hash` embedder + heuristic enrichment), each
+stage added on top of the previous:
 
-> Note on the offline defaults: with the lexical `hash` embedder, enrichment is
-> roughly neutral (well-named tools already carry the lexical signal, and extra
-> query points can collide). Its real payoff appears with a **semantic** embedder
-> — there, the LLM-generated task language and synthetic queries bridge the
-> vocabulary gap that lexical matching can't. The harness lets you confirm this
-> on your own embedder.
+| Retrieval | Hit@1 | Recall@5 | MRR | nDCG@5 |
+|---|---|---|---|---|
+| dense-only, no rerank | 0.739 | 0.913 | 0.812 | 0.837 |
+| + hybrid (dense+sparse, RRF) | 0.870 | **1.000** | 0.920 | 0.940 |
+| + lexical rerank | **0.913** | **1.000** | **0.949** | **0.962** |
+
+Hybrid retrieval finds the right MCP in the top-5 for every query and lifts
+precision-at-1 sharply (exact tool-name matches that the lexical embedder's
+dense side blurs); reranking then cleans up the ordering. The harness is the
+point: every change to enrichment, embedding, or retrieval should be judged by
+these numbers, not by eyeballing a few queries.
+
+> Note on enrichment under the offline `hash` embedder: it is roughly neutral
+> there (well-named tools already carry the lexical signal). Its real payoff
+> appears with a **semantic** embedder, where LLM-generated task language and
+> synthetic queries bridge the vocabulary gap. Hybrid + rerank, by contrast,
+> help even on the offline defaults, as the table shows.
 
 ## Connecting an agent
 
@@ -191,8 +228,9 @@ Defaults run end-to-end with `docker compose up -d` and no further setup.
 
 Implemented: official-registry + file sources, **enrichment pipeline (heuristic
 + LLM capability cards with synthetic queries)**, multi-representation indexing
-(server/tool/query), Qdrant store, the three discovery tools, hash +
-OpenAI-compatible embedders, and an **evaluation harness** with a golden set.
+(server/tool/query), **hybrid retrieval (dense + sparse, RRF) with lexical/LLM
+reranking**, Qdrant store, the three discovery tools, hash + OpenAI-compatible
+embedders, and an **evaluation harness** with a golden set and ablation.
 
 Natural next steps:
 
@@ -202,10 +240,11 @@ Natural next steps:
   not their tools; connect to each server and call `tools/list` to populate real
   tool- and query-level vectors (today tools come only from sources that list
   them, like the fixtures).
-- **Hybrid search.** Combine dense vectors with sparse/keyword (Qdrant supports
-  both) so exact tool-name matches aren't missed.
-- **Cross-encoder re-ranker.** Re-score the top-K with a model that reads query
-  and candidate together — the next big precision lever after enrichment.
+- **Model-based cross-encoder.** The `Reranker` interface already supports it;
+  add a hosted cross-encoder (e.g. a BGE reranker behind an HTTP endpoint)
+  alongside the lexical and LLM rerankers.
+- **IDF-weighted sparse.** The sparse encoder is stateless TF; persist corpus
+  document-frequencies to upgrade it to BM25.
 - **Online feedback loop.** Log which MCP an agent actually selected and whether
   the task succeeded, and feed those labels back into ranking.
 
