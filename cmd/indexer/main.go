@@ -46,7 +46,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("source: %v", err)
 	}
-	ext := cfg.NewExtractor()
+	ext, err := cfg.NewExtractor()
+	if err != nil {
+		log.Fatalf("extractor: %v", err)
+	}
 	ix := index.New(src, ext, enr, emb, cfg.NewSparseEncoder(), st)
 	ix.ExtractConcurrency = cfg.ExtractConcurrency
 

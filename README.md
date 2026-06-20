@@ -171,6 +171,27 @@ Properties:
 Off by default, since it is slow and many public servers gate `tools/list`
 behind authentication.
 
+### Authenticated extraction
+
+To reach servers that require auth, supply credentials and they are attached as
+HTTP headers on the probe:
+
+- `EXTRACT_AUTH_TOKEN` — a global bearer token applied to every server.
+- `EXTRACT_CREDENTIALS` — a JSON file of per-server headers, keyed by MCP id,
+  endpoint host, or a `*.host` wildcard; the most specific match wins, falling
+  back to the global token:
+
+  ```json
+  {
+    "io.github.acme/search": {"Authorization": "Bearer ..."},
+    "api.example.com":       {"X-API-Key": "..."},
+    "*.corp.internal":       {"Authorization": "Bearer ..."}
+  }
+  ```
+
+Resolution order per server: exact MCP id → exact host → `*.host` wildcard →
+global token → anonymous.
+
 ## Enrichment (capability cards)
 
 Enrichment is the highest-leverage stage. Choose it with `ENRICHER`:
@@ -272,7 +293,8 @@ Defaults run end-to-end with `docker compose up -d` and no further setup.
 ## Status & roadmap
 
 Implemented: registry + **GitHub crawler** + file sources, **live tool extraction**
-(remote `tools/list` probing), **enrichment pipeline (heuristic + LLM capability
+(remote `tools/list` probing, with **per-server authentication**), **enrichment
+pipeline (heuristic + LLM capability
 cards with synthetic queries)**, multi-representation indexing
 (server/tool/query), **hybrid retrieval (dense + sparse, RRF) with lexical/LLM
 reranking**, Qdrant store, the three discovery tools, hash + OpenAI-compatible
@@ -284,6 +306,8 @@ Natural next steps:
   `source.Source`.
 - **Identity resolution.** The same MCP can appear in both the registry and the
   GitHub crawl; dedupe to a canonical entity before indexing.
+- **OAuth extraction.** Static tokens/headers are supported; add the SDK's
+  OAuth flow for servers that require interactive authorization.
 - **Model-based cross-encoder.** The `Reranker` interface already supports it;
   add a hosted cross-encoder (e.g. a BGE reranker behind an HTTP endpoint)
   alongside the lexical and LLM rerankers.

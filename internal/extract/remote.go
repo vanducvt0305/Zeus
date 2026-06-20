@@ -13,23 +13,44 @@ import (
 
 // Remote extracts tools by connecting to a server's remote transports
 // (streamable-http or sse) as an MCP client and calling tools/list. Each
-// connection attempt is bounded by Timeout.
+// connection attempt is bounded by Timeout. When credentials are configured,
+// the matching auth headers are attached so endpoints that gate tools/list
+// behind auth can be reached.
 type Remote struct {
-	timeout    time.Duration
+	timeout time.Duration
+	creds   *Credentials
+	// Anonymous client reused when no credentials apply. No client-level
+	// timeout: the per-attempt context deadline bounds the work, and a client
+	// timeout would break the transport's SSE stream.
 	httpClient *http.Client
 }
 
-// NewRemote builds a Remote extractor with the given per-attempt timeout.
+// NewRemote builds a Remote extractor with the given per-attempt timeout and no
+// credentials.
 func NewRemote(timeout time.Duration) *Remote {
+	return NewRemoteWithAuth(timeout, nil)
+}
+
+// NewRemoteWithAuth builds a Remote extractor that attaches credentials when
+// they match the server being probed.
+func NewRemoteWithAuth(timeout time.Duration, creds *Credentials) *Remote {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
 	return &Remote{
-		timeout: timeout,
-		// No client-level timeout: the per-attempt context deadline bounds the
-		// work, and a client timeout would break the transport's SSE stream.
+		timeout:    timeout,
+		creds:      creds,
 		httpClient: &http.Client{},
 	}
+}
+
+// httpClientFor returns a client that injects the given auth headers, or the
+// shared anonymous client when there are none.
+func (r *Remote) httpClientFor(headers map[string]string) *http.Client {
+	if len(headers) == 0 {
+		return r.httpClient
+	}
+	return &http.Client{Transport: headerRoundTripper{base: http.DefaultTransport, headers: headers}}
 }
 
 func (r *Remote) Name() string { return "remote" }
@@ -43,7 +64,8 @@ func (r *Remote) Extract(ctx context.Context, m model.MCP) (model.MCP, error) {
 	var lastErr error
 	tried := false
 	for _, t := range m.Transports {
-		transport := clientTransport(t, r.httpClient)
+		hc := r.httpClientFor(r.creds.Headers(m.ID, t.URL))
+		transport := clientTransport(t, hc)
 		if transport == nil {
 			continue // unsupported / non-remote transport type
 		}

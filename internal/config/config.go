@@ -41,7 +41,9 @@ type Config struct {
 	// calls tools/list to recover its real tools before enrichment/indexing.
 	ExtractTools       bool
 	ExtractConcurrency int
-	ExtractTimeout     int // seconds, per connection attempt
+	ExtractTimeout     int    // seconds, per connection attempt
+	ExtractAuthToken   string // global bearer token for tools/list probing
+	ExtractCredentials string // path to a per-server credentials JSON file
 
 	// Enricher selection: "heuristic" (offline default), "llm", or "none".
 	Enricher string
@@ -88,6 +90,8 @@ func Load() Config {
 		ExtractTools:       envBool("EXTRACT_TOOLS", false),
 		ExtractConcurrency: envInt("EXTRACT_CONCURRENCY", 8),
 		ExtractTimeout:     envInt("EXTRACT_TIMEOUT", 20),
+		ExtractAuthToken:   env("EXTRACT_AUTH_TOKEN", ""),
+		ExtractCredentials: env("EXTRACT_CREDENTIALS", ""),
 
 		Enricher:    env("ENRICHER", "heuristic"),
 		LLMProvider: env("LLM_PROVIDER", "anthropic"),
@@ -147,12 +151,17 @@ func (c Config) NewReranker() (rerank.Reranker, error) {
 	}
 }
 
-// NewExtractor builds the configured tool extractor.
-func (c Config) NewExtractor() extract.Extractor {
+// NewExtractor builds the configured tool extractor, loading any auth
+// credentials for reaching servers that gate tools/list behind auth.
+func (c Config) NewExtractor() (extract.Extractor, error) {
 	if !c.ExtractTools {
-		return extract.Noop{}
+		return extract.Noop{}, nil
 	}
-	return extract.NewRemote(time.Duration(c.ExtractTimeout) * time.Second)
+	creds, err := extract.LoadCredentials(c.ExtractCredentials, c.ExtractAuthToken)
+	if err != nil {
+		return nil, err
+	}
+	return extract.NewRemoteWithAuth(time.Duration(c.ExtractTimeout)*time.Second, creds), nil
 }
 
 // NewEnricher builds the configured enricher.

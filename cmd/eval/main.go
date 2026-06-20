@@ -57,7 +57,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("enricher: %v", err)
 		}
-		ix := index.New(source.NewFile(*fixtures), cfg.NewExtractor(), enr, svc.Embedder, cfg.NewSparseEncoder(), svc.Store)
+		ext, err := cfg.NewExtractor()
+		if err != nil {
+			log.Fatalf("extractor: %v", err)
+		}
+		ix := index.New(source.NewFile(*fixtures), ext, enr, svc.Embedder, cfg.NewSparseEncoder(), svc.Store)
 		log.Printf("indexing fixtures (enricher=%s, embedder=%s, collection=%s)...", enr.Name(), svc.Embedder.Name(), cfg.QdrantCollection)
 		if _, err := ix.Run(ctx, 0); err != nil {
 			log.Fatalf("indexing fixtures: %v", err)
