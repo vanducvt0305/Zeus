@@ -36,6 +36,9 @@ type Indexer struct {
 	BatchSize int
 	// ExtractConcurrency bounds how many servers are probed for tools at once.
 	ExtractConcurrency int
+	// Prune deletes a (re)indexed MCP's existing points before upserting, so
+	// tools/queries removed since the last run don't linger as orphans.
+	Prune bool
 }
 
 // New builds an Indexer with sensible defaults. Nil stages default to no-ops: a
@@ -57,6 +60,7 @@ func New(src source.Source, ext extract.Extractor, enr enrich.Enricher, emb embe
 		Store:              st,
 		BatchSize:          64,
 		ExtractConcurrency: 8,
+		Prune:              true,
 	}
 }
 
@@ -85,6 +89,13 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 
 	if err := ix.Store.EnsureCollection(ctx, ix.Embedder.Dim()); err != nil {
 		return 0, fmt.Errorf("ensuring collection: %w", err)
+	}
+
+	if ix.Prune {
+		ids := distinctIDs(mcps)
+		if err := ix.Store.DeleteByMCPs(ctx, ids); err != nil {
+			return 0, fmt.Errorf("pruning stale points: %w", err)
+		}
 	}
 
 	queue := buildRecords(mcps)
@@ -218,6 +229,20 @@ func (ix *Indexer) scoreTrustAll(ctx context.Context, mcps []model.MCP) []model.
 	}
 	if failures > 0 {
 		log.Printf("trust scoring completed with %d failures (used fallback)", failures)
+	}
+	return out
+}
+
+// distinctIDs returns the unique MCP ids in the slice.
+func distinctIDs(mcps []model.MCP) []string {
+	seen := make(map[string]struct{}, len(mcps))
+	out := make([]string, 0, len(mcps))
+	for _, m := range mcps {
+		if _, ok := seen[m.ID]; ok {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		out = append(out, m.ID)
 	}
 	return out
 }

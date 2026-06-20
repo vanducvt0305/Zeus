@@ -40,6 +40,10 @@ type Config struct {
 
 	// ExtractTools, when true, connects to each server's remote endpoint and
 	// calls tools/list to recover its real tools before enrichment/indexing.
+	// IndexPrune deletes a (re)indexed MCP's existing points before upserting,
+	// so removed tools/queries don't linger as orphans.
+	IndexPrune bool
+
 	ExtractTools       bool
 	ExtractConcurrency int
 	ExtractTimeout     int    // seconds, per connection attempt
@@ -94,6 +98,7 @@ func Load() Config {
 		EmbedModel:   env("EMBED_MODEL", "nomic-embed-text"),
 		EmbedDim:     envInt("EMBED_DIM", 256),
 
+		IndexPrune:         envBool("INDEX_PRUNE", true),
 		ExtractTools:       envBool("EXTRACT_TOOLS", false),
 		ExtractConcurrency: envInt("EXTRACT_CONCURRENCY", 8),
 		ExtractTimeout:     envInt("EXTRACT_TIMEOUT", 20),

@@ -56,6 +56,7 @@ func main() {
 	}
 	ix := index.New(src, ext, enr, emb, cfg.NewSparseEncoder(), st)
 	ix.ExtractConcurrency = cfg.ExtractConcurrency
+	ix.Prune = cfg.IndexPrune
 	ix.Trust = tr
 
 	log.Printf("indexing (source=%s, extract=%t, enricher=%s, trust=%s, embedder=%s, dim=%d, collection=%s)", src.Name(), cfg.ExtractTools, enr.Name(), tr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)

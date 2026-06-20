@@ -81,6 +81,9 @@ type Store interface {
 	Upsert(ctx context.Context, records []Record) error
 	// Search returns up to q.TopK distinct MCPs ranked by relevance.
 	Search(ctx context.Context, q SearchQuery) ([]Hit, error)
+	// DeleteByMCPs removes every point belonging to the given MCP ids. Used to
+	// prune stale/orphan points (e.g. tools removed since the last index).
+	DeleteByMCPs(ctx context.Context, ids []string) error
 	// Get returns the MCP with the given id, or (nil, nil) if not found.
 	Get(ctx context.Context, id string) (*model.MCP, error)
 	// Categories returns the distinct categories present in the store.
