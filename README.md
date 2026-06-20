@@ -13,11 +13,11 @@ agent can call to discover capabilities at runtime. Think of it as
 ## How it works
 
 ```
-┌─────────────────────────────────────────────┐
-│  INDEXER  (cmd/indexer, run periodically)     │
-│  source → normalize → embed → upsert          │
-│  Official MCP Registry  ──►  Qdrant           │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│  INDEXER  (cmd/indexer, run periodically)             │
+│  source → extract tools → enrich → embed → upsert     │
+│  Official MCP Registry  ──►  Qdrant                   │
+└─────────────────────────────────────────────────────┘
                      │
               ┌──────▼──────┐
               │   Qdrant    │   vectors + MCP metadata
@@ -67,6 +67,7 @@ cmd/
 internal/
   model/       normalized MCP schema + capability card (one shape for every source)
   source/      catalogs of MCPs (Source interface + official registry + file)
+  extract/     Extractor interface + remote tools/list probing (real tools)
   enrich/      Enricher interface + heuristic (offline) + LLM capability cards
   llm/         Client interface + Anthropic + OpenAI-compatible chat
   embed/       Embedder interface + hash (offline) + OpenAI-compatible impls
@@ -74,7 +75,7 @@ internal/
   store/       Store interface + Qdrant impl (named dense+sparse, RRF fusion)
   rerank/      Reranker interface + lexical (offline) + LLM reranker
   search/      query pipeline: embed → hybrid retrieve → rerank → top-k
-  index/       indexer: source → enrich → embed(+sparse) → store
+  index/       indexer: source → extract → enrich → embed(+sparse) → store
   server/      the three MCP tools
   eval/        IR metrics (Hit@1, Recall@k, MRR, nDCG@k) + runner
   config/      env-driven config; builds the whole pipeline
@@ -125,6 +126,32 @@ make index LIMIT=200 && make server
 > Changing the embedder changes the vector dimension. Recreate the collection
 > when you switch: `docker compose down -v` (wipes Qdrant), then re-index. Or set
 > a fresh `QDRANT_COLLECTION` name.
+
+## Tool extraction
+
+The registry tells you how to *connect to* a server but not which tools it
+exposes — yet tools are the most query-relevant signal. With `EXTRACT_TOOLS=true`
+the indexer connects to each server's **remote** endpoint (streamable-http or
+sse) as an MCP client, calls `tools/list`, and folds the real tools into the
+record before enrichment and indexing.
+
+```bash
+make index-tools LIMIT=200      # or: EXTRACT_TOOLS=true ./bin/indexer
+```
+
+Properties:
+
+- **Safety first.** Only remote HTTP(S) endpoints are contacted. Package-based
+  (npm/pypi/oci) stdio servers are **never installed or executed** — that would
+  run untrusted third-party code.
+- **Best-effort + concurrent.** Servers are probed in parallel
+  (`EXTRACT_CONCURRENCY`) with a per-attempt deadline (`EXTRACT_TIMEOUT`).
+  Unreachable servers or ones requiring auth are skipped, never fatal.
+- **Non-destructive.** Records that already carry tools (e.g. file fixtures) pass
+  through untouched.
+
+Off by default, since it is slow and many public servers gate `tools/list`
+behind authentication.
 
 ## Enrichment (capability cards)
 
@@ -226,8 +253,9 @@ Defaults run end-to-end with `docker compose up -d` and no further setup.
 
 ## Status & roadmap
 
-Implemented: official-registry + file sources, **enrichment pipeline (heuristic
-+ LLM capability cards with synthetic queries)**, multi-representation indexing
+Implemented: official-registry + file sources, **live tool extraction**
+(remote `tools/list` probing), **enrichment pipeline (heuristic + LLM capability
+cards with synthetic queries)**, multi-representation indexing
 (server/tool/query), **hybrid retrieval (dense + sparse, RRF) with lexical/LLM
 reranking**, Qdrant store, the three discovery tools, hash + OpenAI-compatible
 embedders, and an **evaluation harness** with a golden set and ablation.
@@ -236,10 +264,8 @@ Natural next steps:
 
 - **More sources.** A GitHub crawler (`topic:mcp`, parse `server.json`/README)
   and aggregators (mcp.so, Smithery, Glama) — just add a `source.Source`.
-- **Tool extraction.** The registry describes how to *connect to* servers but
-  not their tools; connect to each server and call `tools/list` to populate real
-  tool- and query-level vectors (today tools come only from sources that list
-  them, like the fixtures).
+- **Authenticated extraction.** Tool extraction currently skips servers that
+  gate `tools/list` behind auth; add an OAuth/token provider to reach them.
 - **Model-based cross-encoder.** The `Reranker` interface already supports it;
   add a hosted cross-encoder (e.g. a BGE reranker behind an HTTP endpoint)
   alongside the lexical and LLM rerankers.

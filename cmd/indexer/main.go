@@ -43,10 +43,11 @@ func main() {
 		log.Fatalf("enricher: %v", err)
 	}
 
-	src := source.NewRegistry(cfg.RegistryURL)
-	ix := index.New(src, enr, emb, cfg.NewSparseEncoder(), st)
+	ext := cfg.NewExtractor()
+	ix := index.New(source.NewRegistry(cfg.RegistryURL), ext, enr, emb, cfg.NewSparseEncoder(), st)
+	ix.ExtractConcurrency = cfg.ExtractConcurrency
 
-	log.Printf("indexing (enricher=%s, embedder=%s, dim=%d, collection=%s)", enr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)
+	log.Printf("indexing (extract=%t, enricher=%s, embedder=%s, dim=%d, collection=%s)", cfg.ExtractTools, enr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)
 	n, err := ix.Run(context.Background(), *limit)
 	if err != nil {
 		log.Fatalf("indexing failed: %v", err)

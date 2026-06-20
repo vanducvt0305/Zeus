@@ -1,4 +1,4 @@
-.PHONY: build server indexer eval eval-compare qdrant-up qdrant-down index tidy test clean
+.PHONY: build server indexer eval eval-compare qdrant-up qdrant-down index index-tools tidy test clean
 
 build:
 	go build -o bin/server ./cmd/server
@@ -22,6 +22,11 @@ qdrant-down:
 LIMIT ?= 0
 index: build
 	./bin/indexer -limit $(LIMIT)
+
+# Index the registry WITH live tool extraction (connects to remote servers and
+# calls tools/list). Slower; many servers need auth.
+index-tools: build
+	EXTRACT_TOOLS=true ./bin/indexer -limit $(LIMIT)
 
 # Index the eval fixtures and print the search-quality scorecard.
 eval: build

@@ -9,8 +9,11 @@ import (
 	"os"
 	"strconv"
 
+	"time"
+
 	"github.com/vanducvt0305/zeus/internal/embed"
 	"github.com/vanducvt0305/zeus/internal/enrich"
+	"github.com/vanducvt0305/zeus/internal/extract"
 	"github.com/vanducvt0305/zeus/internal/llm"
 	"github.com/vanducvt0305/zeus/internal/rerank"
 	"github.com/vanducvt0305/zeus/internal/search"
@@ -32,6 +35,12 @@ type Config struct {
 	EmbedAPIKey  string
 	EmbedModel   string
 	EmbedDim     int
+
+	// ExtractTools, when true, connects to each server's remote endpoint and
+	// calls tools/list to recover its real tools before enrichment/indexing.
+	ExtractTools       bool
+	ExtractConcurrency int
+	ExtractTimeout     int // seconds, per connection attempt
 
 	// Enricher selection: "heuristic" (offline default), "llm", or "none".
 	Enricher string
@@ -70,6 +79,10 @@ func Load() Config {
 		EmbedModel:   env("EMBED_MODEL", "nomic-embed-text"),
 		EmbedDim:     envInt("EMBED_DIM", 256),
 
+		ExtractTools:       envBool("EXTRACT_TOOLS", false),
+		ExtractConcurrency: envInt("EXTRACT_CONCURRENCY", 8),
+		ExtractTimeout:     envInt("EXTRACT_TIMEOUT", 20),
+
 		Enricher:    env("ENRICHER", "heuristic"),
 		LLMProvider: env("LLM_PROVIDER", "anthropic"),
 		LLMBaseURL:  env("LLM_BASE_URL", ""),
@@ -105,6 +118,14 @@ func (c Config) NewReranker() (rerank.Reranker, error) {
 	default:
 		return nil, fmt.Errorf("unknown RERANKER %q (want \"lexical\", \"llm\" or \"none\")", c.Reranker)
 	}
+}
+
+// NewExtractor builds the configured tool extractor.
+func (c Config) NewExtractor() extract.Extractor {
+	if !c.ExtractTools {
+		return extract.Noop{}
+	}
+	return extract.NewRemote(time.Duration(c.ExtractTimeout) * time.Second)
 }
 
 // NewEnricher builds the configured enricher.

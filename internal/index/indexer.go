@@ -8,34 +8,53 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/vanducvt0305/zeus/internal/embed"
 	"github.com/vanducvt0305/zeus/internal/enrich"
+	"github.com/vanducvt0305/zeus/internal/extract"
 	"github.com/vanducvt0305/zeus/internal/model"
 	"github.com/vanducvt0305/zeus/internal/source"
 	"github.com/vanducvt0305/zeus/internal/sparse"
 	"github.com/vanducvt0305/zeus/internal/store"
 )
 
-// Indexer orchestrates one indexing pass: source → enrich → embed → store.
+// Indexer orchestrates one indexing pass: source → extract tools → enrich →
+// embed(+sparse) → store.
 type Indexer struct {
-	Source   source.Source
-	Enricher enrich.Enricher
-	Embedder embed.Embedder
-	Sparse   sparse.Encoder
-	Store    store.Store
+	Source    source.Source
+	Extractor extract.Extractor
+	Enricher  enrich.Enricher
+	Embedder  embed.Embedder
+	Sparse    sparse.Encoder
+	Store     store.Store
 
 	// BatchSize bounds how many texts are embedded per request.
 	BatchSize int
+	// ExtractConcurrency bounds how many servers are probed for tools at once.
+	ExtractConcurrency int
 }
 
-// New builds an Indexer with sensible defaults. A nil enricher means no
-// enrichment is applied; a nil sparse encoder means dense-only points.
-func New(src source.Source, enr enrich.Enricher, emb embed.Embedder, sp sparse.Encoder, st store.Store) *Indexer {
+// New builds an Indexer with sensible defaults. Nil stages default to no-ops: a
+// nil extractor/enricher skips that stage; a nil sparse encoder means
+// dense-only points.
+func New(src source.Source, ext extract.Extractor, enr enrich.Enricher, emb embed.Embedder, sp sparse.Encoder, st store.Store) *Indexer {
+	if ext == nil {
+		ext = extract.Noop{}
+	}
 	if enr == nil {
 		enr = enrich.Noop{}
 	}
-	return &Indexer{Source: src, Enricher: enr, Embedder: emb, Sparse: sp, Store: st, BatchSize: 64}
+	return &Indexer{
+		Source:             src,
+		Extractor:          ext,
+		Enricher:           enr,
+		Embedder:           emb,
+		Sparse:             sp,
+		Store:              st,
+		BatchSize:          64,
+		ExtractConcurrency: 8,
+	}
 }
 
 // Run fetches up to limit MCPs from the source and indexes them. A limit <= 0
@@ -52,6 +71,7 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 	}
 	log.Printf("fetched %d MCPs", len(mcps))
 
+	mcps = ix.extractAll(ctx, mcps)
 	mcps = ix.enrichAll(ctx, mcps)
 
 	if err := ix.Store.EnsureCollection(ctx, ix.Embedder.Dim()); err != nil {
@@ -90,6 +110,55 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 	}
 
 	return len(mcps), nil
+}
+
+// extractAll probes servers for their tool lists concurrently. Only records
+// that lack tools and expose a connectable transport are probed; everything
+// else passes through untouched. Extraction is best-effort — most public
+// servers require auth — so failures are counted, not fatal.
+func (ix *Indexer) extractAll(ctx context.Context, mcps []model.MCP) []model.MCP {
+	if _, isNoop := ix.Extractor.(extract.Noop); isNoop {
+		return mcps
+	}
+	conc := ix.ExtractConcurrency
+	if conc <= 0 {
+		conc = 8
+	}
+	log.Printf("extracting tools from up to %d MCPs with %q (concurrency=%d)...", len(mcps), ix.Extractor.Name(), conc)
+
+	out := make([]model.MCP, len(mcps))
+	sem := make(chan struct{}, conc)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var withTools, failed int
+
+	for i, m := range mcps {
+		// Skip records that already have tools or have nothing to connect to.
+		if len(m.Tools) > 0 || len(m.Transports) == 0 {
+			out[i] = m
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, m model.MCP) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			em, err := ix.Extractor.Extract(ctx, m)
+			out[i] = em
+			mu.Lock()
+			switch {
+			case err != nil:
+				failed++
+			case len(em.Tools) > 0:
+				withTools++
+			}
+			mu.Unlock()
+		}(i, m)
+	}
+	wg.Wait()
+
+	log.Printf("tool extraction: %d servers yielded tools, %d failed/unreachable", withTools, failed)
+	return out
 }
 
 // enrichAll runs the enricher over every MCP. Enrichment is best-effort: a
