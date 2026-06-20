@@ -15,6 +15,7 @@ import (
 	"github.com/vanducvt0305/zeus/internal/enrich"
 	"github.com/vanducvt0305/zeus/internal/extract"
 	"github.com/vanducvt0305/zeus/internal/llm"
+	"github.com/vanducvt0305/zeus/internal/proxy"
 	"github.com/vanducvt0305/zeus/internal/rerank"
 	"github.com/vanducvt0305/zeus/internal/search"
 	"github.com/vanducvt0305/zeus/internal/source"
@@ -75,6 +76,10 @@ type Config struct {
 	// final ranking, 0..1. 0 disables the blend.
 	TrustWeight float64
 
+	// Proxy: the server's call_mcp tool forwards calls to discovered MCPs.
+	ProxyEnabled bool
+	ProxyTimeout int // seconds, per connect+call
+
 	// Source selection for the indexer: "registry" (default), "github", "file".
 	Source        string
 	RegistryURL   string
@@ -120,6 +125,9 @@ func Load() Config {
 
 		Trust:       env("TRUST", "heuristic"),
 		TrustWeight: envFloat("TRUST_WEIGHT", 0.15),
+
+		ProxyEnabled: envBool("PROXY_ENABLED", true),
+		ProxyTimeout: envInt("PROXY_TIMEOUT", 30),
 
 		Source:        env("SOURCE", "registry"),
 		RegistryURL:   env("REGISTRY_URL", ""),
@@ -206,6 +214,19 @@ func (c Config) NewReranker() (rerank.Reranker, error) {
 	default:
 		return nil, fmt.Errorf("unknown RERANKER %q (want \"lexical\", \"llm\" or \"none\")", c.Reranker)
 	}
+}
+
+// NewProxy builds the call-forwarding proxy, or nil if disabled. It reuses the
+// extractor's credentials and SSRF policy for reaching target servers.
+func (c Config) NewProxy() (*proxy.Proxy, error) {
+	if !c.ProxyEnabled {
+		return nil, nil
+	}
+	creds, err := extract.LoadCredentials(c.ExtractCredentials, c.ExtractAuthToken)
+	if err != nil {
+		return nil, err
+	}
+	return proxy.New(creds, c.ExtractAllowPrivate, time.Duration(c.ProxyTimeout)*time.Second), nil
 }
 
 // NewExtractor builds the configured tool extractor, loading any auth

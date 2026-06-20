@@ -29,13 +29,18 @@ func main() {
 		defer c.Close()
 	}
 
-	log.Printf("starting MCP discovery server (embedder=%s, hybrid=%t, reranker=%s, collection=%s)",
-		svc.Embedder.Name(), cfg.Hybrid, cfg.Reranker, cfg.QdrantCollection)
+	prx, err := cfg.NewProxy()
+	if err != nil {
+		log.Fatalf("proxy: %v", err)
+	}
+
+	log.Printf("starting MCP discovery server (embedder=%s, hybrid=%t, reranker=%s, call_mcp=%t, collection=%s)",
+		svc.Embedder.Name(), cfg.Hybrid, cfg.Reranker, prx != nil, cfg.QdrantCollection)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := server.New("zeus-mcp-discovery", "0.1.0", svc)
+	srv := server.New("zeus-mcp-discovery", "0.1.0", svc, prx)
 	if err := srv.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}

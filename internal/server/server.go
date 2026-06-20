@@ -9,13 +9,16 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/vanducvt0305/zeus/internal/model"
+	"github.com/vanducvt0305/zeus/internal/proxy"
 	"github.com/vanducvt0305/zeus/internal/search"
 	"github.com/vanducvt0305/zeus/internal/store"
 )
 
-// New builds the MCP discovery server, registering its tools.
-func New(name, version string, svc *search.Service) *mcp.Server {
-	s := &service{svc: svc}
+// New builds the MCP discovery server, registering its tools. When prx is
+// non-nil, the call_mcp tool is exposed so the server can forward calls to
+// discovered MCPs (router/proxy mode).
+func New(name, version string, svc *search.Service, prx *proxy.Proxy) *mcp.Server {
+	s := &service{svc: svc, proxy: prx}
 	srv := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -36,11 +39,21 @@ func New(name, version string, svc *search.Service) *mcp.Server {
 		Description: "List the distinct categories present in the indexed MCP catalog, useful as filters for search_mcp.",
 	}, s.listCategories)
 
+	if s.proxy != nil {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: "call_mcp",
+			Description: "Call a tool on another MCP server that you found via search_mcp, without connecting to it yourself. " +
+				"Give the mcp id, the tool name, and its arguments; Zeus connects to that server and forwards the call, returning its result. " +
+				"Works for servers with a remote (http/sse) endpoint.",
+		}, s.callMCP)
+	}
+
 	return srv
 }
 
 type service struct {
-	svc *search.Service
+	svc   *search.Service
+	proxy *proxy.Proxy
 }
 
 // ---- search_mcp ----
@@ -141,4 +154,37 @@ func (s *service) listCategories(ctx context.Context, _ *mcp.CallToolRequest, _ 
 		return nil, CategoriesOutput{}, err
 	}
 	return nil, CategoriesOutput{Categories: cats}, nil
+}
+
+// ---- call_mcp (router/proxy) ----
+
+type CallInput struct {
+	MCPID     string         `json:"mcp_id" jsonschema:"id of the MCP server to call (as returned by search_mcp)"`
+	Tool      string         `json:"tool" jsonschema:"name of the tool to invoke on that MCP server"`
+	Arguments map[string]any `json:"arguments,omitempty" jsonschema:"arguments object passed to the tool"`
+}
+
+type CallOutput struct {
+	Found      bool   `json:"found"`
+	Content    string `json:"content,omitempty"`
+	Structured any    `json:"structured,omitempty"`
+	IsError    bool   `json:"is_error,omitempty"`
+}
+
+func (s *service) callMCP(ctx context.Context, _ *mcp.CallToolRequest, in CallInput) (*mcp.CallToolResult, CallOutput, error) {
+	if in.MCPID == "" || in.Tool == "" {
+		return nil, CallOutput{}, fmt.Errorf("mcp_id and tool are required")
+	}
+	m, err := s.svc.Store.Get(ctx, in.MCPID)
+	if err != nil {
+		return nil, CallOutput{}, err
+	}
+	if m == nil {
+		return nil, CallOutput{Found: false}, nil
+	}
+	res, err := s.proxy.Call(ctx, *m, in.Tool, in.Arguments)
+	if err != nil {
+		return nil, CallOutput{}, err
+	}
+	return nil, CallOutput{Found: true, Content: res.Content, Structured: res.Structured, IsError: res.IsError}, nil
 }

@@ -34,6 +34,7 @@ agent can call to discover capabilities at runtime. Think of it as
 │    • search_mcp(query, top_k, categories…)    │
 │    • get_mcp_details(id)                       │
 │    • list_categories()                         │
+│    • call_mcp(mcp_id, tool, args)  ← router   │
 │  query pipeline:                              │
 │    embed → hybrid retrieve (dense+sparse,RRF) │
 │         → rerank → trust-blend → top-k        │
@@ -82,6 +83,7 @@ internal/
   store/       Store interface + Qdrant impl (named dense+sparse, RRF fusion)
   rerank/      Reranker interface + lexical (offline) + LLM reranker
   search/      query pipeline: embed → hybrid retrieve → rerank → top-k
+  proxy/       router: forward a tool call to a discovered MCP (call_mcp)
   index/       indexer: sources → resolve → extract → enrich → trust → embed → store
   server/      the three MCP tools
   eval/        IR metrics (Hit@1, Recall@k, MRR, nDCG@k) + runner
@@ -356,6 +358,28 @@ Or run it from the prebuilt container (needs a reachable Qdrant):
 }
 ```
 
+## Router mode (`call_mcp`)
+
+Discovery finds the right MCP, but the agent still has to *connect* to it — and
+most hosts only allow statically-configured servers. `call_mcp` closes that gap:
+the agent asks Zeus to run a tool on a discovered server, and **Zeus connects to
+the target and forwards the call**. The agent needs only one connection — to
+Zeus, the switchboard.
+
+```jsonc
+// agent → Zeus
+call_mcp({ "mcp_id": "io.github.acme/search", "tool": "web_search",
+           "arguments": { "query": "..." } })
+// Zeus connects to acme/search's remote endpoint, calls web_search,
+// and returns its result.
+```
+
+- Works for servers exposing a **remote** (http/sse) endpoint; package-only
+  (stdio) servers return a clear "install locally" error (Zeus never runs
+  untrusted code).
+- Uses the same SSRF-guarded, credential-aware connection path as extraction.
+- Disable with `PROXY_ENABLED=false` (then the tool isn't registered).
+
 ## Configuration
 
 All settings come from the environment; see [`.env.example`](./.env.example).
@@ -370,8 +394,9 @@ authentication**), **enrichment pipeline (heuristic + LLM capability
 cards with synthetic queries)**, **trust/quality scoring (heuristic + LLM)
 blended into ranking**, multi-representation indexing
 (server/tool/query), **hybrid retrieval (dense + sparse, RRF) with lexical/LLM
-reranking**, Qdrant store, the three discovery tools, hash + OpenAI-compatible
-embedders, and an **evaluation harness** with a golden set and ablation.
+reranking**, Qdrant store, the discovery tools **plus a `call_mcp` router**
+that forwards calls to discovered servers, hash + OpenAI-compatible embedders,
+and an **evaluation harness** with a golden set and ablation.
 
 Hardened for scale/ops: the full record is stored once per MCP (not on every
 point) and search batch-fetches winners; payload field indexes; categories via

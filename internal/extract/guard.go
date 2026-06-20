@@ -58,6 +58,18 @@ func guardedTransport(allowPrivate bool) *http.Transport {
 	return t
 }
 
+// GuardedHTTPClient builds an http.Client that dials through the SSRF-guarded
+// transport, optionally injects auth headers, and refuses cross-host redirects.
+// Exported so the proxy can reuse the same hardened connection path.
+func GuardedHTTPClient(allowPrivate bool, headers map[string]string) *http.Client {
+	tr := guardedTransport(allowPrivate)
+	var rt http.RoundTripper = tr
+	if len(headers) > 0 {
+		rt = headerRoundTripper{base: tr, headers: headers}
+	}
+	return &http.Client{Transport: rt, CheckRedirect: noCrossHostRedirect}
+}
+
 // noCrossHostRedirect blocks redirects to a different host (which would both
 // re-send any auth headers to that host and bypass the original SSRF check) and
 // caps redirect depth.

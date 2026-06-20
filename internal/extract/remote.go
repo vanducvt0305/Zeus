@@ -97,6 +97,12 @@ func (r *Remote) Extract(ctx context.Context, m model.MCP) (model.MCP, error) {
 	return m, nil
 }
 
+// ClientTransport maps a remote transport descriptor to an MCP client
+// transport, or nil for non-remote/unsupported types. Exported for the proxy.
+func ClientTransport(t model.Transport, hc *http.Client) mcp.Transport {
+	return clientTransport(t, hc)
+}
+
 // clientTransport maps a registry remote to an MCP client transport. Returns
 // nil for transport types we don't connect to.
 func clientTransport(t model.Transport, hc *http.Client) mcp.Transport {
