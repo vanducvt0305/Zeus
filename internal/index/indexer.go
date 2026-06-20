@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/vanducvt0305/zeus/internal/embed"
 	"github.com/vanducvt0305/zeus/internal/enrich"
@@ -74,6 +75,8 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 	if ix.BatchSize <= 0 {
 		ix.BatchSize = 64
 	}
+	start := time.Now()
+	defer func() { log.Printf("indexing pass took %s", time.Since(start).Round(time.Millisecond)) }()
 
 	log.Printf("fetching MCPs from source %q...", ix.Source.Name())
 	mcps, err := ix.Source.Fetch(ctx, limit)

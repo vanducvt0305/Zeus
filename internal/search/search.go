@@ -66,7 +66,7 @@ func (s *Service) Search(ctx context.Context, query string, topK int, filter sto
 		}
 	}
 
-	hits = s.blendTrust(hits)
+	hits = s.finalize(hits)
 
 	if len(hits) > topK {
 		hits = hits[:topK]
@@ -74,18 +74,26 @@ func (s *Service) Search(ctx context.Context, query string, topK int, filter sto
 	return hits, nil
 }
 
-// blendTrust nudges the relevance ranking with each result's trust prior:
+// finalize computes each result's final score and orders by it. The score is
+// rank-based relevance (1 at the top, decaying down the post-rerank list)
+// blended with the trust prior:
 //
 //	final = (1-w)*relevance + w*trust
 //
-// relevance is a rank-based score (1 at the top, decaying down the list), so a
-// modest weight only reorders among comparably-relevant results rather than
-// overriding relevance. With w=0 or uniform trust, the order is unchanged.
-func (s *Service) blendTrust(hits []store.Hit) []store.Hit {
-	if s.TrustWeight <= 0 || len(hits) < 2 {
+// It always runs (even with w=0) so the returned Score reflects the actual
+// final ranking — not the first-stage retrieval score, which would otherwise
+// look inconsistent with the order after reranking. A modest w only reorders
+// among comparably-relevant results.
+func (s *Service) finalize(hits []store.Hit) []store.Hit {
+	if len(hits) == 0 {
 		return hits
 	}
 	w := s.TrustWeight
+	if w < 0 {
+		w = 0
+	} else if w > 1 {
+		w = 1
+	}
 	n := float64(len(hits))
 	type scored struct {
 		hit   store.Hit
@@ -99,6 +107,7 @@ func (s *Service) blendTrust(hits []store.Hit) []store.Hit {
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].final > ranked[j].final })
 	out := make([]store.Hit, len(ranked))
 	for i, r := range ranked {
+		r.hit.Score = float32(r.final)
 		out[i] = r.hit
 	}
 	return out

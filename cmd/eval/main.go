@@ -15,6 +15,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os/signal"
 	"sort"
@@ -53,6 +54,9 @@ func main() {
 	svc, err := cfg.NewSearchService()
 	if err != nil {
 		log.Fatalf("search service: %v", err)
+	}
+	if c, ok := svc.Store.(io.Closer); ok {
+		defer c.Close()
 	}
 
 	if *doIndex {

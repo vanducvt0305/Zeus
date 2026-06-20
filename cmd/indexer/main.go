@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log"
 	"os/signal"
 	"syscall"
@@ -37,6 +38,9 @@ func main() {
 	st, err := cfg.NewStore()
 	if err != nil {
 		log.Fatalf("store: %v", err)
+	}
+	if c, ok := st.(io.Closer); ok {
+		defer c.Close()
 	}
 
 	enr, err := cfg.NewEnricher()

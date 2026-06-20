@@ -355,15 +355,26 @@ blended into ranking**, multi-representation indexing
 reranking**, Qdrant store, the three discovery tools, hash + OpenAI-compatible
 embedders, and an **evaluation harness** with a golden set and ablation.
 
+Hardened for scale/ops: the full record is stored once per MCP (not on every
+point) and search batch-fetches winners; payload field indexes; categories via
+the facet API; deterministic point ids with stale-point pruning; durable
+(`Wait`) writes; concurrent enrich/trust/GitHub stages; retry-with-backoff on
+all outbound HTTP; an SSRF-guarded extractor (no private/loopback targets,
+no cross-host credential leaks); and graceful shutdown.
+
 Natural next steps:
 
+- **Streaming indexer.** Process the source in batches (fetch → enrich → upsert
+  per chunk) instead of holding the whole corpus in memory — needed for very
+  large catalogs.
+- **Vector quantization.** Enable Qdrant scalar quantization to cut memory at
+  million-point scale.
 - **More sources.** Aggregators (mcp.so, Smithery, Glama) — just add a
   `source.Source`.
 - **OAuth extraction.** Static tokens/headers are supported; add the SDK's
   OAuth flow for servers that require interactive authorization.
 - **Model-based cross-encoder.** The `Reranker` interface already supports it;
-  add a hosted cross-encoder (e.g. a BGE reranker behind an HTTP endpoint)
-  alongside the lexical and LLM rerankers.
+  add a hosted cross-encoder (e.g. a BGE reranker behind an HTTP endpoint).
 - **IDF-weighted sparse.** The sparse encoder is stateless TF; persist corpus
   document-frequencies to upgrade it to BM25.
 - **Online feedback loop.** Log which MCP an agent actually selected and whether

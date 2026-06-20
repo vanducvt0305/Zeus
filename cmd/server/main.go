@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"os/signal"
 	"syscall"
@@ -23,6 +24,9 @@ func main() {
 	svc, err := cfg.NewSearchService()
 	if err != nil {
 		log.Fatalf("search service: %v", err)
+	}
+	if c, ok := svc.Store.(io.Closer); ok {
+		defer c.Close()
 	}
 
 	log.Printf("starting MCP discovery server (embedder=%s, hybrid=%t, reranker=%s, collection=%s)",
