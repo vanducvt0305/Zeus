@@ -63,30 +63,6 @@ type registryEntry struct {
 	} `json:"_meta"`
 }
 
-// serverJSON is the official server.json shape (the fields we use).
-type serverJSON struct {
-	Name        string `json:"name"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Version     string `json:"version"`
-	WebsiteURL  string `json:"websiteUrl"`
-	Repository  struct {
-		URL string `json:"url"`
-	} `json:"repository"`
-	Remotes []struct {
-		Type string `json:"type"`
-		URL  string `json:"url"`
-	} `json:"remotes"`
-	Packages []struct {
-		RegistryType string `json:"registryType"`
-		Identifier   string `json:"identifier"`
-		Version      string `json:"version"`
-		Transport    struct {
-			Type string `json:"type"`
-		} `json:"transport"`
-	} `json:"packages"`
-}
-
 func (r *Registry) Fetch(ctx context.Context, limit int) ([]model.MCP, error) {
 	const pageSize = 100
 	var out []model.MCP
@@ -150,28 +126,7 @@ func (r *Registry) fetchPage(ctx context.Context, cursor string, pageSize int) (
 }
 
 func mapServer(e registryEntry) model.MCP {
-	s := e.Server
-	m := model.MCP{
-		ID:          s.Name,
-		Name:        s.Name,
-		Title:       s.Title,
-		Description: s.Description,
-		Version:     s.Version,
-		Repository:  s.Repository.URL,
-		Homepage:    s.WebsiteURL,
-		Source:      "registry",
-		UpdatedAt:   e.Meta.Official.UpdatedAt,
-	}
-	for _, rm := range s.Remotes {
-		m.Transports = append(m.Transports, model.Transport{Type: rm.Type, URL: rm.URL})
-	}
-	for _, p := range s.Packages {
-		m.Packages = append(m.Packages, model.Package{
-			RegistryType: p.RegistryType,
-			Identifier:   p.Identifier,
-			Version:      p.Version,
-			Transport:    p.Transport.Type,
-		})
-	}
+	m := e.Server.toMCP("registry")
+	m.UpdatedAt = e.Meta.Official.UpdatedAt
 	return m
 }

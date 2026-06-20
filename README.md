@@ -66,7 +66,7 @@ cmd/
   eval/        CLI that scores search quality against a golden set
 internal/
   model/       normalized MCP schema + capability card (one shape for every source)
-  source/      catalogs of MCPs (Source interface + official registry + file)
+  source/      catalogs of MCPs (Source: official registry + GitHub crawler + file)
   extract/     Extractor interface + remote tools/list probing (real tools)
   enrich/      Enricher interface + heuristic (offline) + LLM capability cards
   llm/         Client interface + Anthropic + OpenAI-compatible chat
@@ -126,6 +126,24 @@ make index LIMIT=200 && make server
 > Changing the embedder changes the vector dimension. Recreate the collection
 > when you switch: `docker compose down -v` (wipes Qdrant), then re-index. Or set
 > a fresh `QDRANT_COLLECTION` name.
+
+## Sources
+
+The indexer pulls MCPs from a `source.Source`, selected with `SOURCE`:
+
+| `SOURCE` | What it crawls |
+|---|---|
+| `registry` (default) | The official MCP registry (`registry.modelcontextprotocol.io`). |
+| `github` | GitHub repository search by MCP topics; parses a root `server.json` when present, else builds from repo metadata (description, topics, homepage). Set `GITHUB_TOKEN` to raise the search rate limit; `GITHUB_QUERIES` overrides the default topic queries. |
+| `file` | A local JSON catalog at `SOURCE_FILE` — for hand-declared MCPs or fixtures. |
+
+```bash
+make index           # registry
+make index-github    # GitHub (GITHUB_TOKEN=... recommended)
+```
+
+Records from every source share the same normalized schema, so extraction,
+enrichment, indexing, and search treat them identically.
 
 ## Tool extraction
 
@@ -253,7 +271,7 @@ Defaults run end-to-end with `docker compose up -d` and no further setup.
 
 ## Status & roadmap
 
-Implemented: official-registry + file sources, **live tool extraction**
+Implemented: registry + **GitHub crawler** + file sources, **live tool extraction**
 (remote `tools/list` probing), **enrichment pipeline (heuristic + LLM capability
 cards with synthetic queries)**, multi-representation indexing
 (server/tool/query), **hybrid retrieval (dense + sparse, RRF) with lexical/LLM
@@ -262,10 +280,10 @@ embedders, and an **evaluation harness** with a golden set and ablation.
 
 Natural next steps:
 
-- **More sources.** A GitHub crawler (`topic:mcp`, parse `server.json`/README)
-  and aggregators (mcp.so, Smithery, Glama) — just add a `source.Source`.
-- **Authenticated extraction.** Tool extraction currently skips servers that
-  gate `tools/list` behind auth; add an OAuth/token provider to reach them.
+- **More sources.** Aggregators (mcp.so, Smithery, Glama) — just add a
+  `source.Source`.
+- **Identity resolution.** The same MCP can appear in both the registry and the
+  GitHub crawl; dedupe to a canonical entity before indexing.
 - **Model-based cross-encoder.** The `Reranker` interface already supports it;
   add a hosted cross-encoder (e.g. a BGE reranker behind an HTTP endpoint)
   alongside the lexical and LLM rerankers.

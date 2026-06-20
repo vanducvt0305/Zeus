@@ -1,4 +1,4 @@
-.PHONY: build server indexer eval eval-compare qdrant-up qdrant-down index index-tools tidy test clean
+.PHONY: build server indexer eval eval-compare qdrant-up qdrant-down index index-tools index-github tidy test clean
 
 build:
 	go build -o bin/server ./cmd/server
@@ -27,6 +27,11 @@ index: build
 # calls tools/list). Slower; many servers need auth.
 index-tools: build
 	EXTRACT_TOOLS=true ./bin/indexer -limit $(LIMIT)
+
+# Crawl GitHub for MCP repositories instead of the registry. Set GITHUB_TOKEN to
+# raise the search rate limit.
+index-github: build
+	SOURCE=github ./bin/indexer -limit $(LIMIT)
 
 # Index the eval fixtures and print the search-quality scorecard.
 eval: build

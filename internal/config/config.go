@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-
+	"strings"
 	"time"
 
 	"github.com/vanducvt0305/zeus/internal/embed"
@@ -17,6 +17,7 @@ import (
 	"github.com/vanducvt0305/zeus/internal/llm"
 	"github.com/vanducvt0305/zeus/internal/rerank"
 	"github.com/vanducvt0305/zeus/internal/search"
+	"github.com/vanducvt0305/zeus/internal/source"
 	"github.com/vanducvt0305/zeus/internal/sparse"
 	"github.com/vanducvt0305/zeus/internal/store"
 )
@@ -60,7 +61,12 @@ type Config struct {
 	// to the requested top-k.
 	RerankPool int
 
-	RegistryURL string
+	// Source selection for the indexer: "registry" (default), "github", "file".
+	Source        string
+	RegistryURL   string
+	GitHubToken   string
+	GitHubQueries []string
+	SourceFile    string
 }
 
 // Load reads configuration from the environment, applying defaults that make
@@ -93,7 +99,28 @@ func Load() Config {
 		Reranker:   env("RERANKER", "lexical"),
 		RerankPool: envInt("RERANK_POOL", 30),
 
-		RegistryURL: env("REGISTRY_URL", ""),
+		Source:        env("SOURCE", "registry"),
+		RegistryURL:   env("REGISTRY_URL", ""),
+		GitHubToken:   env("GITHUB_TOKEN", ""),
+		GitHubQueries: splitList(env("GITHUB_QUERIES", "")),
+		SourceFile:    env("SOURCE_FILE", ""),
+	}
+}
+
+// NewSource builds the configured indexing source.
+func (c Config) NewSource() (source.Source, error) {
+	switch c.Source {
+	case "", "registry":
+		return source.NewRegistry(c.RegistryURL), nil
+	case "github":
+		return source.NewGitHub(c.GitHubToken, c.GitHubQueries), nil
+	case "file":
+		if c.SourceFile == "" {
+			return nil, fmt.Errorf("SOURCE_FILE is required when SOURCE=file")
+		}
+		return source.NewFile(c.SourceFile), nil
+	default:
+		return nil, fmt.Errorf("unknown SOURCE %q (want \"registry\", \"github\" or \"file\")", c.Source)
 	}
 }
 
@@ -219,6 +246,20 @@ func envInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+// splitList parses a comma-separated env value into a trimmed, non-empty slice.
+func splitList(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func envBool(key string, def bool) bool {

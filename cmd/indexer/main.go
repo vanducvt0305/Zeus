@@ -17,7 +17,6 @@ import (
 
 	"github.com/vanducvt0305/zeus/internal/config"
 	"github.com/vanducvt0305/zeus/internal/index"
-	"github.com/vanducvt0305/zeus/internal/source"
 )
 
 func main() {
@@ -43,11 +42,15 @@ func main() {
 		log.Fatalf("enricher: %v", err)
 	}
 
+	src, err := cfg.NewSource()
+	if err != nil {
+		log.Fatalf("source: %v", err)
+	}
 	ext := cfg.NewExtractor()
-	ix := index.New(source.NewRegistry(cfg.RegistryURL), ext, enr, emb, cfg.NewSparseEncoder(), st)
+	ix := index.New(src, ext, enr, emb, cfg.NewSparseEncoder(), st)
 	ix.ExtractConcurrency = cfg.ExtractConcurrency
 
-	log.Printf("indexing (extract=%t, enricher=%s, embedder=%s, dim=%d, collection=%s)", cfg.ExtractTools, enr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)
+	log.Printf("indexing (source=%s, extract=%t, enricher=%s, embedder=%s, dim=%d, collection=%s)", src.Name(), cfg.ExtractTools, enr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)
 	n, err := ix.Run(context.Background(), *limit)
 	if err != nil {
 		log.Fatalf("indexing failed: %v", err)
