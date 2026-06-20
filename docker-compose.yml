@@ -1,0 +1,15 @@
+# Local Qdrant for development.
+#   docker compose up -d
+# REST UI:  http://localhost:6333/dashboard
+# gRPC (used by this project): localhost:6334
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333" # REST + dashboard
+      - "6334:6334" # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  qdrant_data:
