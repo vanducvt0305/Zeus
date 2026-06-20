@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.vanducvt0305/zeus",
+  "title": "Zeus — MCP Discovery",
+  "description": "Find the right MCP servers for any task via semantic search over the MCP ecosystem.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/vanducvt0305/zeus",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/vanducvt0305/zeus",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/vanducvt0305/zeus",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

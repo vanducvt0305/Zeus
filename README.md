@@ -1,5 +1,10 @@
 # Zeus — MCP Discovery Server
 
+[![CI](https://github.com/vanducvt0305/zeus/actions/workflows/ci.yml/badge.svg)](https://github.com/vanducvt0305/zeus/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8.svg)](https://go.dev)
+[![MCP](https://img.shields.io/badge/Model_Context_Protocol-server-7C3AED.svg)](https://modelcontextprotocol.io)
+
 A "meta-MCP": an MCP server that helps agents **find the right MCP servers for a
 task**. Instead of hard-coding which MCPs an agent can use, the agent asks Zeus
 in natural language — *"I need to search product data"* — and gets back the most
@@ -338,6 +343,19 @@ client config (Claude Code / Claude Desktop style):
 
 The agent then calls `search_mcp` to discover other MCPs to use.
 
+Or run it from the prebuilt container (needs a reachable Qdrant):
+
+```json
+{
+  "mcpServers": {
+    "zeus-discovery": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "QDRANT_HOST=host.docker.internal", "ghcr.io/vanducvt0305/zeus"]
+    }
+  }
+}
+```
+
 ## Configuration
 
 All settings come from the environment; see [`.env.example`](./.env.example).
@@ -379,6 +397,34 @@ Natural next steps:
   document-frequencies to upgrade it to BM25.
 - **Online feedback loop.** Log which MCP an agent actually selected and whether
   the task succeeded, and feed those labels back into ranking.
+
+## Publishing & listing
+
+Agents and developers discover MCP servers through registries and directories,
+not web search — so distribution means being listed where they look.
+
+1. **Official MCP Registry.** [`server.json`](./server.json) describes this
+   server (name `io.github.vanducvt0305/zeus`). Build and push the image, then
+   publish:
+
+   ```bash
+   docker build -t ghcr.io/vanducvt0305/zeus:0.1.0 .
+   docker push ghcr.io/vanducvt0305/zeus:0.1.0
+   # https://github.com/modelcontextprotocol/registry — login with GitHub, then:
+   mcp-publisher login github
+   mcp-publisher publish
+   ```
+
+   The `io.github.<owner>/...` namespace is verified via your GitHub account.
+
+2. **Aggregators / directories.** Submit to Smithery (uses
+   [`smithery.yaml`](./smithery.yaml)), Glama, mcp.so, PulseMCP, and the
+   `awesome-mcp-servers` GitHub list. Most of them crawl GitHub + `server.json`,
+   so a clean repo carries you a long way.
+
+3. **GitHub repo.** Add the topics `mcp`, `mcp-server`,
+   `model-context-protocol`, `vector-search` (Settings → Topics) so the crawlers
+   and `topic:` searches find it, and keep the README demo current.
 
 ## Development
 

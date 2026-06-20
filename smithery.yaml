@@ -1,0 +1,25 @@
+# Smithery deployment config (https://smithery.ai/docs).
+# Zeus needs a reachable Qdrant, so it ships as a container built from the
+# repo Dockerfile and speaks MCP over stdio.
+runtime: container
+build:
+  dockerfile: Dockerfile
+startCommand:
+  type: stdio
+  # Configuration the user can set when installing from Smithery; forwarded to
+  # the container as environment variables.
+  configSchema:
+    type: object
+    properties:
+      qdrantHost:
+        type: string
+        description: Qdrant host
+        default: localhost
+      qdrantPort:
+        type: integer
+        description: Qdrant gRPC port
+        default: 6334
+      qdrantCollection:
+        type: string
+        description: Qdrant collection name
+        default: mcps
