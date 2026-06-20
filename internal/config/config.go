@@ -10,6 +10,8 @@ import (
 	"strconv"
 
 	"github.com/vanducvt0305/zeus/internal/embed"
+	"github.com/vanducvt0305/zeus/internal/enrich"
+	"github.com/vanducvt0305/zeus/internal/llm"
 	"github.com/vanducvt0305/zeus/internal/store"
 )
 
@@ -22,11 +24,20 @@ type Config struct {
 
 	// Embedder selection: "hash" (offline default) or "openai" (any
 	// OpenAI-compatible endpoint: OpenAI, Voyage, Ollama, TEI).
-	Embedder    string
+	Embedder     string
 	EmbedBaseURL string
 	EmbedAPIKey  string
 	EmbedModel   string
 	EmbedDim     int
+
+	// Enricher selection: "heuristic" (offline default), "llm", or "none".
+	Enricher string
+
+	// LLM settings, used when Enricher == "llm".
+	LLMProvider string // "anthropic" or "openai"
+	LLMBaseURL  string
+	LLMAPIKey   string
+	LLMModel    string
 
 	RegistryURL string
 }
@@ -47,7 +58,45 @@ func Load() Config {
 		EmbedModel:   env("EMBED_MODEL", "nomic-embed-text"),
 		EmbedDim:     envInt("EMBED_DIM", 256),
 
+		Enricher:    env("ENRICHER", "heuristic"),
+		LLMProvider: env("LLM_PROVIDER", "anthropic"),
+		LLMBaseURL:  env("LLM_BASE_URL", ""),
+		LLMAPIKey:   env("LLM_API_KEY", ""),
+		LLMModel:    env("LLM_MODEL", "claude-haiku-4-5"),
+
 		RegistryURL: env("REGISTRY_URL", ""),
+	}
+}
+
+// NewEnricher builds the configured enricher.
+func (c Config) NewEnricher() (enrich.Enricher, error) {
+	switch c.Enricher {
+	case "", "heuristic":
+		return enrich.Heuristic{}, nil
+	case "none", "noop":
+		return enrich.Noop{}, nil
+	case "llm":
+		client, err := c.newLLMClient()
+		if err != nil {
+			return nil, err
+		}
+		return enrich.NewLLM(client), nil
+	default:
+		return nil, fmt.Errorf("unknown ENRICHER %q (want \"heuristic\", \"llm\" or \"none\")", c.Enricher)
+	}
+}
+
+func (c Config) newLLMClient() (llm.Client, error) {
+	switch c.LLMProvider {
+	case "", "anthropic":
+		if c.LLMAPIKey == "" {
+			return nil, fmt.Errorf("LLM_API_KEY is required for the anthropic provider")
+		}
+		return llm.NewAnthropic(c.LLMBaseURL, c.LLMAPIKey, c.LLMModel, 1024), nil
+	case "openai":
+		return llm.NewOpenAI(c.LLMBaseURL, c.LLMAPIKey, c.LLMModel), nil
+	default:
+		return nil, fmt.Errorf("unknown LLM_PROVIDER %q (want \"anthropic\" or \"openai\")", c.LLMProvider)
 	}
 }
 

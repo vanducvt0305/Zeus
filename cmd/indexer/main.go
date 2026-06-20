@@ -38,10 +38,15 @@ func main() {
 		log.Fatalf("store: %v", err)
 	}
 
-	src := source.NewRegistry(cfg.RegistryURL)
-	ix := index.New(src, emb, st)
+	enr, err := cfg.NewEnricher()
+	if err != nil {
+		log.Fatalf("enricher: %v", err)
+	}
 
-	log.Printf("indexing (embedder=%s, dim=%d, collection=%s)", emb.Name(), emb.Dim(), cfg.QdrantCollection)
+	src := source.NewRegistry(cfg.RegistryURL)
+	ix := index.New(src, enr, emb, st)
+
+	log.Printf("indexing (enricher=%s, embedder=%s, dim=%d, collection=%s)", enr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)
 	n, err := ix.Run(context.Background(), *limit)
 	if err != nil {
 		log.Fatalf("indexing failed: %v", err)

@@ -49,6 +49,58 @@ type MCP struct {
 	Tools       []Tool      `json:"tools,omitempty"`
 	Source      string      `json:"source"`              // "registry", "github", ...
 	UpdatedAt   string      `json:"updatedAt,omitempty"` // RFC3339 from the source, if known
+
+	// Enrichment is the generated "capability card". It is empty until the
+	// enrichment stage runs, and is what gives search its quality: it rewrites
+	// a terse, marketing-flavored MCP into the task language agents actually
+	// query in. See package enrich.
+	Enrichment Enrichment `json:"enrichment,omitempty"`
+}
+
+// Enrichment is the normalized capability card produced for an MCP. Every field
+// is optional; richer enrichers (LLM-backed) fill more of it than the offline
+// heuristic one.
+type Enrichment struct {
+	// Summary is a normalized one-paragraph description of what the MCP does.
+	Summary string `json:"summary,omitempty"`
+	// Tasks are the "jobs to be done" phrased in agent-intent language,
+	// e.g. "extract tables from a PDF", "cancel a hotel booking".
+	Tasks []string `json:"tasks,omitempty"`
+	// ExampleQueries are synthetic queries an agent might issue that this MCP
+	// answers. They are indexed as their own vectors to bridge the gap between
+	// how agents ask and how MCPs describe themselves.
+	ExampleQueries []string `json:"exampleQueries,omitempty"`
+	// Synonyms are alternative terms for the MCP's domain and capabilities.
+	Synonyms []string `json:"synonyms,omitempty"`
+	// Categories are derived domain categories (may extend MCP.Categories).
+	Categories []string `json:"categories,omitempty"`
+	// Enricher records which enricher produced this card, for debugging.
+	Enricher string `json:"enricher,omitempty"`
+}
+
+// IsEmpty reports whether no enrichment has been applied.
+func (e Enrichment) IsEmpty() bool {
+	return e.Summary == "" && len(e.Tasks) == 0 && len(e.ExampleQueries) == 0 &&
+		len(e.Synonyms) == 0 && len(e.Categories) == 0
+}
+
+// AllCategories merges source-provided and enrichment-derived categories,
+// de-duplicated and stable-ordered.
+func (m MCP) AllCategories() []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, c := range append(append([]string{}, m.Categories...), m.Enrichment.Categories...) {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	return out
 }
 
 // DisplayName returns the human-friendly name, preferring Title.
@@ -60,8 +112,9 @@ func (m MCP) DisplayName() string {
 }
 
 // EmbeddingText builds the text used to compute the server-level embedding.
-// It deliberately front-loads the most discriminative fields (name, title,
-// description) and appends categories and tool names for extra recall.
+// It front-loads the most discriminative fields and, when enrichment is
+// present, prefers the normalized summary and task list over the raw
+// description — that is what aligns the document with agent-intent queries.
 func (m MCP) EmbeddingText() string {
 	var b strings.Builder
 	write := func(s string) {
@@ -72,9 +125,19 @@ func (m MCP) EmbeddingText() string {
 	}
 	write(m.Title)
 	write(m.Name)
-	write(m.Description)
-	if len(m.Categories) > 0 {
-		write("Categories: " + strings.Join(m.Categories, ", "))
+	if s := strings.TrimSpace(m.Enrichment.Summary); s != "" {
+		write(s)
+	} else {
+		write(m.Description)
+	}
+	if len(m.Enrichment.Tasks) > 0 {
+		write("Can be used to: " + strings.Join(m.Enrichment.Tasks, "; "))
+	}
+	if len(m.Enrichment.Synonyms) > 0 {
+		write("Related: " + strings.Join(m.Enrichment.Synonyms, ", "))
+	}
+	if cats := m.AllCategories(); len(cats) > 0 {
+		write("Categories: " + strings.Join(cats, ", "))
 	}
 	if len(m.Tools) > 0 {
 		names := make([]string, 0, len(m.Tools))

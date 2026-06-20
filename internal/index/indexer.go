@@ -1,6 +1,7 @@
-// Package index wires a Source, an Embedder, and a Store together: it pulls
-// MCP records from a catalog, turns them into vectors, and writes them to the
-// store. Run it periodically (cron, CI, a queue) to keep the index fresh.
+// Package index wires a Source, an Enricher, an Embedder, and a Store together:
+// it pulls MCP records from a catalog, rewrites them into capability cards,
+// turns them into vectors, and writes them to the store. Run it periodically
+// (cron, CI, a queue) to keep the index fresh.
 package index
 
 import (
@@ -9,14 +10,16 @@ import (
 	"log"
 
 	"github.com/vanducvt0305/zeus/internal/embed"
+	"github.com/vanducvt0305/zeus/internal/enrich"
 	"github.com/vanducvt0305/zeus/internal/model"
 	"github.com/vanducvt0305/zeus/internal/source"
 	"github.com/vanducvt0305/zeus/internal/store"
 )
 
-// Indexer orchestrates one indexing pass.
+// Indexer orchestrates one indexing pass: source → enrich → embed → store.
 type Indexer struct {
 	Source   source.Source
+	Enricher enrich.Enricher
 	Embedder embed.Embedder
 	Store    store.Store
 
@@ -24,9 +27,13 @@ type Indexer struct {
 	BatchSize int
 }
 
-// New builds an Indexer with sensible defaults.
-func New(src source.Source, emb embed.Embedder, st store.Store) *Indexer {
-	return &Indexer{Source: src, Embedder: emb, Store: st, BatchSize: 64}
+// New builds an Indexer with sensible defaults. A nil enricher means no
+// enrichment is applied.
+func New(src source.Source, enr enrich.Enricher, emb embed.Embedder, st store.Store) *Indexer {
+	if enr == nil {
+		enr = enrich.Noop{}
+	}
+	return &Indexer{Source: src, Enricher: enr, Embedder: emb, Store: st, BatchSize: 64}
 }
 
 // Run fetches up to limit MCPs from the source and indexes them. A limit <= 0
@@ -43,29 +50,13 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 	}
 	log.Printf("fetched %d MCPs", len(mcps))
 
+	mcps = ix.enrichAll(ctx, mcps)
+
 	if err := ix.Store.EnsureCollection(ctx, ix.Embedder.Dim()); err != nil {
 		return 0, fmt.Errorf("ensuring collection: %w", err)
 	}
 
-	// Build one server-level record per MCP plus one tool-level record per
-	// tool, then embed and upsert in batches.
-	type pending struct {
-		rec  store.Record
-		text string
-	}
-	var queue []pending
-	for _, m := range mcps {
-		queue = append(queue, pending{
-			rec:  store.Record{Kind: store.KindServer, MCP: m},
-			text: m.EmbeddingText(),
-		})
-		for _, t := range m.Tools {
-			queue = append(queue, pending{
-				rec:  store.Record{Kind: store.KindTool, ToolName: t.Name, MCP: m},
-				text: m.ToolEmbeddingText(t),
-			})
-		}
-	}
+	queue := buildRecords(mcps)
 
 	indexed := 0
 	for start := 0; start < len(queue); start += ix.BatchSize {
@@ -93,7 +84,61 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 		log.Printf("indexed %d/%d points", indexed, len(queue))
 	}
 
-	return countServers(mcps), nil
+	return len(mcps), nil
 }
 
-func countServers(mcps []model.MCP) int { return len(mcps) }
+// enrichAll runs the enricher over every MCP. Enrichment is best-effort: a
+// failure on one record logs a warning and keeps whatever (heuristic) card the
+// enricher returned, rather than dropping the record.
+func (ix *Indexer) enrichAll(ctx context.Context, mcps []model.MCP) []model.MCP {
+	log.Printf("enriching %d MCPs with %q...", len(mcps), ix.Enricher.Name())
+	out := make([]model.MCP, len(mcps))
+	failures := 0
+	for i, m := range mcps {
+		enriched, err := ix.Enricher.Enrich(ctx, m)
+		if err != nil {
+			failures++
+			if failures <= 5 {
+				log.Printf("warning: %v", err)
+			}
+		}
+		out[i] = enriched
+	}
+	if failures > 0 {
+		log.Printf("enrichment completed with %d failures (used fallback)", failures)
+	}
+	return out
+}
+
+// pending pairs a record with the text to embed for it.
+type pending struct {
+	rec  store.Record
+	text string
+}
+
+// buildRecords expands each MCP into its multi-representation points: one
+// server vector, one vector per tool, and one vector per synthetic example
+// query. The query points carry agent-intent language directly, which is what
+// closes the query/document vocabulary gap.
+func buildRecords(mcps []model.MCP) []pending {
+	var queue []pending
+	for _, m := range mcps {
+		queue = append(queue, pending{
+			rec:  store.Record{Kind: store.KindServer, MCP: m},
+			text: m.EmbeddingText(),
+		})
+		for _, t := range m.Tools {
+			queue = append(queue, pending{
+				rec:  store.Record{Kind: store.KindTool, ToolName: t.Name, MCP: m},
+				text: m.ToolEmbeddingText(t),
+			})
+		}
+		for _, q := range m.Enrichment.ExampleQueries {
+			queue = append(queue, pending{
+				rec:  store.Record{Kind: store.KindQuery, Query: q, MCP: m},
+				text: q,
+			})
+		}
+	}
+	return queue
+}

@@ -1,8 +1,9 @@
-.PHONY: build server indexer qdrant-up qdrant-down index tidy test clean
+.PHONY: build server indexer eval eval-compare qdrant-up qdrant-down index tidy test clean
 
 build:
 	go build -o bin/server ./cmd/server
 	go build -o bin/indexer ./cmd/indexer
+	go build -o bin/eval ./cmd/eval
 
 server: build
 	./bin/server
@@ -21,6 +22,16 @@ qdrant-down:
 LIMIT ?= 0
 index: build
 	./bin/indexer -limit $(LIMIT)
+
+# Index the eval fixtures and print the search-quality scorecard.
+eval: build
+	./bin/eval -index -fails
+
+# Compare baseline (no enrichment) vs heuristic enrichment on the fixtures,
+# each in its own collection. Requires Qdrant running.
+eval-compare: build
+	@echo "=== ENRICHER=none ===";      ENRICHER=none      QDRANT_COLLECTION=eval_none      ./bin/eval -index
+	@echo "=== ENRICHER=heuristic ==="; ENRICHER=heuristic QDRANT_COLLECTION=eval_heuristic ./bin/eval -index
 
 tidy:
 	go mod tidy

@@ -1,0 +1,188 @@
+[
+  {
+    "id": "exa-web-search",
+    "name": "exa-web-search",
+    "title": "Exa",
+    "description": "Neural web search engine with semantic retrieval and content crawling for real-time information access.",
+    "categories": ["web-search"],
+    "tools": [
+      {"name": "web_search", "description": "Run a neural or keyword web search and return ranked results."},
+      {"name": "find_similar", "description": "Find pages similar to a given URL."},
+      {"name": "get_contents", "description": "Fetch the full cleaned text contents of a web page."}
+    ]
+  },
+  {
+    "id": "postgres-db",
+    "name": "postgres-db",
+    "title": "PostgreSQL",
+    "description": "Connect to PostgreSQL relational databases for read and write access with schema introspection.",
+    "categories": ["database"],
+    "tools": [
+      {"name": "run_query", "description": "Execute a SQL statement and return rows."},
+      {"name": "list_tables", "description": "List the tables in the connected database."},
+      {"name": "describe_table", "description": "Return the column schema of a table."}
+    ]
+  },
+  {
+    "id": "github",
+    "name": "github",
+    "title": "GitHub",
+    "description": "Interact with GitHub repositories, issues, and pull requests for source code collaboration.",
+    "categories": ["developer-tools", "version-control"],
+    "tools": [
+      {"name": "create_issue", "description": "Open a new issue on a repository."},
+      {"name": "list_pull_requests", "description": "List open pull requests for a repository."},
+      {"name": "get_file_contents", "description": "Read a file from a repository."},
+      {"name": "search_code", "description": "Search code across repositories."}
+    ]
+  },
+  {
+    "id": "slack",
+    "name": "slack",
+    "title": "Slack",
+    "description": "Team messaging integration for posting and reading workspace conversations.",
+    "categories": ["communication"],
+    "tools": [
+      {"name": "post_message", "description": "Send a message to a channel or user."},
+      {"name": "list_channels", "description": "List channels in the workspace."}
+    ]
+  },
+  {
+    "id": "gmail-email",
+    "name": "gmail-email",
+    "title": "Gmail",
+    "description": "Email automation for Gmail mailboxes: composing, sending, and searching messages.",
+    "categories": ["communication", "productivity"],
+    "tools": [
+      {"name": "send_email", "description": "Compose and send an email message."},
+      {"name": "search_messages", "description": "Search the mailbox for messages."}
+    ]
+  },
+  {
+    "id": "filesystem",
+    "name": "filesystem",
+    "title": "Filesystem",
+    "description": "Local filesystem access for reading, writing, and listing files and directories.",
+    "categories": ["storage"],
+    "tools": [
+      {"name": "read_file", "description": "Read the contents of a file."},
+      {"name": "write_file", "description": "Write contents to a file."},
+      {"name": "list_directory", "description": "List the entries of a directory."}
+    ]
+  },
+  {
+    "id": "google-maps",
+    "name": "google-maps",
+    "title": "Google Maps",
+    "description": "Geospatial services for mapping, geocoding, place discovery, and route planning.",
+    "categories": ["maps", "geolocation"],
+    "tools": [
+      {"name": "geocode", "description": "Convert an address into latitude and longitude."},
+      {"name": "directions", "description": "Compute a route between two locations."},
+      {"name": "place_search", "description": "Search for places near a location."}
+    ]
+  },
+  {
+    "id": "stripe-payments",
+    "name": "stripe-payments",
+    "title": "Stripe",
+    "description": "Online payments and billing platform for charges, invoices, and refunds.",
+    "categories": ["payments", "finance"],
+    "tools": [
+      {"name": "create_charge", "description": "Charge a customer's card for an amount."},
+      {"name": "list_invoices", "description": "List customer invoices."},
+      {"name": "refund", "description": "Issue a refund for a payment."}
+    ]
+  },
+  {
+    "id": "pdf-extract",
+    "name": "pdf-extract",
+    "title": "Document Intelligence",
+    "description": "Document intelligence platform that parses PDFs into structured text and tabular data.",
+    "categories": ["documents"],
+    "tools": [
+      {"name": "extract_text", "description": "Extract the plain text from a PDF document."},
+      {"name": "extract_tables", "description": "Extract tables from a PDF into structured rows."}
+    ]
+  },
+  {
+    "id": "google-calendar",
+    "name": "google-calendar",
+    "title": "Google Calendar",
+    "description": "Scheduling integration for creating and listing calendar events and meetings.",
+    "categories": ["productivity", "scheduling"],
+    "tools": [
+      {"name": "create_event", "description": "Create a new calendar event."},
+      {"name": "list_events", "description": "List upcoming calendar events."}
+    ]
+  },
+  {
+    "id": "weather",
+    "name": "weather",
+    "title": "Weather",
+    "description": "Meteorological data provider for current conditions and forecasts.",
+    "categories": ["weather"],
+    "tools": [
+      {"name": "get_forecast", "description": "Get the multi-day weather forecast for a location."},
+      {"name": "get_current", "description": "Get the current weather conditions for a location."}
+    ]
+  },
+  {
+    "id": "notion",
+    "name": "notion",
+    "title": "Notion",
+    "description": "Knowledge base and note-taking workspace for pages and structured databases.",
+    "categories": ["productivity", "knowledge-base"],
+    "tools": [
+      {"name": "create_page", "description": "Create a new page."},
+      {"name": "search_pages", "description": "Search across pages and databases."},
+      {"name": "update_database", "description": "Update a database entry."}
+    ]
+  },
+  {
+    "id": "shopify",
+    "name": "shopify",
+    "title": "Shopify",
+    "description": "E-commerce platform for managing storefront products, orders, and inventory.",
+    "categories": ["e-commerce"],
+    "tools": [
+      {"name": "list_products", "description": "List products in the store."},
+      {"name": "create_order", "description": "Create a new order."},
+      {"name": "update_inventory", "description": "Adjust inventory levels for a product."}
+    ]
+  },
+  {
+    "id": "jira",
+    "name": "jira",
+    "title": "Jira",
+    "description": "Issue and project tracking for agile software teams.",
+    "categories": ["developer-tools", "project-management"],
+    "tools": [
+      {"name": "create_ticket", "description": "Create a new issue ticket."},
+      {"name": "transition_issue", "description": "Move an issue to a new status."},
+      {"name": "search_issues", "description": "Search for issues with JQL."}
+    ]
+  },
+  {
+    "id": "youtube",
+    "name": "youtube",
+    "title": "YouTube",
+    "description": "Video platform access for searching videos and retrieving transcripts.",
+    "categories": ["media"],
+    "tools": [
+      {"name": "search_videos", "description": "Search for videos."},
+      {"name": "get_transcript", "description": "Get the transcript of a video."}
+    ]
+  },
+  {
+    "id": "translate",
+    "name": "translate",
+    "title": "Translate",
+    "description": "Machine translation service for converting text between languages.",
+    "categories": ["language"],
+    "tools": [
+      {"name": "translate_text", "description": "Translate text from one language to another."},
+      {"name": "detect_language", "description": "Detect the language of a piece of text."}
+    ]
+  }
+]

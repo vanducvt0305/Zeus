@@ -69,8 +69,9 @@ func (q *Qdrant) Upsert(ctx context.Context, records []Record) error {
 		if err != nil {
 			return fmt.Errorf("marshaling mcp %q: %w", r.MCP.ID, err)
 		}
-		cats := make([]any, len(r.MCP.Categories))
-		for i, c := range r.MCP.Categories {
+		allCats := r.MCP.AllCategories()
+		cats := make([]any, len(allCats))
+		for i, c := range allCats {
 			cats[i] = c
 		}
 		payload := map[string]any{
@@ -82,7 +83,7 @@ func (q *Qdrant) Upsert(ctx context.Context, records []Record) error {
 			fieldMCPJSON:    string(raw),
 		}
 		points = append(points, &qdrant.PointStruct{
-			Id:      qdrant.NewID(pointID(r.MCP.ID, r.Kind, r.ToolName)),
+			Id:      qdrant.NewID(pointID(r.MCP.ID, r.Kind, r.discriminator())),
 			Vectors: qdrant.NewVectors(r.Vector...),
 			Payload: qdrant.NewValueMap(payload),
 		})
@@ -240,7 +241,7 @@ func mcpFromPayload(payload map[string]*qdrant.Value) (model.MCP, error) {
 // pointID derives a stable Qdrant point UUID from the logical key, so that
 // re-indexing the same MCP overwrites its existing points instead of
 // duplicating them.
-func pointID(mcpID string, kind Kind, tool string) string {
-	key := mcpID + "|" + string(kind) + "|" + tool
+func pointID(mcpID string, kind Kind, disc string) string {
+	key := mcpID + "|" + string(kind) + "|" + disc
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(key)).String()
 }

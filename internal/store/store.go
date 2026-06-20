@@ -17,14 +17,32 @@ const (
 	KindServer Kind = "server"
 	// KindTool is one vector per tool, built from the tool's name+description.
 	KindTool Kind = "tool"
+	// KindQuery is one vector per synthetic example query from enrichment. These
+	// points carry the agent-intent language directly, so they match real
+	// queries closely; search collapses them back to their parent MCP.
+	KindQuery Kind = "query"
 )
 
 // Record is a single point to upsert: a vector plus the MCP it belongs to.
 type Record struct {
-	Kind     Kind        // server- or tool-level
-	ToolName string      // set when Kind == KindTool
-	Vector   []float32   // embedding, len == Embedder.Dim()
-	MCP      model.MCP   // full record, stored as payload for retrieval
+	Kind     Kind      // server-, tool- or query-level
+	ToolName string    // set when Kind == KindTool
+	Query    string    // set when Kind == KindQuery
+	Vector   []float32 // embedding, len == Embedder.Dim()
+	MCP      model.MCP // full record, stored as payload for retrieval
+}
+
+// discriminator is the per-MCP sub-key that makes a point id unique and stable
+// across re-indexing, so updates overwrite rather than duplicate.
+func (r Record) discriminator() string {
+	switch r.Kind {
+	case KindTool:
+		return r.ToolName
+	case KindQuery:
+		return r.Query
+	default:
+		return ""
+	}
 }
 
 // Filter narrows a search to a subset of records.
