@@ -50,10 +50,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("extractor: %v", err)
 	}
+	tr, err := cfg.NewTrustScorer()
+	if err != nil {
+		log.Fatalf("trust scorer: %v", err)
+	}
 	ix := index.New(src, ext, enr, emb, cfg.NewSparseEncoder(), st)
 	ix.ExtractConcurrency = cfg.ExtractConcurrency
+	ix.Trust = tr
 
-	log.Printf("indexing (source=%s, extract=%t, enricher=%s, embedder=%s, dim=%d, collection=%s)", src.Name(), cfg.ExtractTools, enr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)
+	log.Printf("indexing (source=%s, extract=%t, enricher=%s, trust=%s, embedder=%s, dim=%d, collection=%s)", src.Name(), cfg.ExtractTools, enr.Name(), tr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)
 	n, err := ix.Run(context.Background(), *limit)
 	if err != nil {
 		log.Fatalf("indexing failed: %v", err)

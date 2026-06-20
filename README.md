@@ -13,11 +13,11 @@ agent can call to discover capabilities at runtime. Think of it as
 ## How it works
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  INDEXER  (cmd/indexer, run periodically)                      │
-│  sources → resolve identity → extract tools → enrich → embed   │
-│  registry / GitHub / file  ──►  dedupe  ──►  Qdrant            │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  INDEXER  (cmd/indexer, run periodically)                              │
+│  sources → resolve → extract tools → enrich → trust-score → embed      │
+│  registry / GitHub / file  ──►  dedupe  ──►  Qdrant                    │
+└──────────────────────────────────────────────────────────────────────┘
                      │
               ┌──────▼──────┐
               │   Qdrant    │   vectors + MCP metadata
@@ -31,7 +31,7 @@ agent can call to discover capabilities at runtime. Think of it as
 │    • list_categories()                         │
 │  query pipeline:                              │
 │    embed → hybrid retrieve (dense+sparse,RRF) │
-│         → rerank shortlist → top-k            │
+│         → rerank → trust-blend → top-k        │
 └─────────────────────────────────────────────┘
 ```
 
@@ -70,13 +70,14 @@ internal/
   resolve/     identity resolution: dedupe/merge the same MCP across sources
   extract/     Extractor interface + remote tools/list probing (real tools)
   enrich/      Enricher interface + heuristic (offline) + LLM capability cards
+  trust/       Scorer interface + heuristic signals + LLM quality scoring
   llm/         Client interface + Anthropic + OpenAI-compatible chat
   embed/       Embedder interface + hash (offline) + OpenAI-compatible impls
   sparse/      sparse keyword encoder for hybrid search
   store/       Store interface + Qdrant impl (named dense+sparse, RRF fusion)
   rerank/      Reranker interface + lexical (offline) + LLM reranker
   search/      query pipeline: embed → hybrid retrieve → rerank → top-k
-  index/       indexer: sources → resolve → extract → enrich → embed → store
+  index/       indexer: sources → resolve → extract → enrich → trust → embed → store
   server/      the three MCP tools
   eval/        IR metrics (Hit@1, Recall@k, MRR, nDCG@k) + runner
   config/      env-driven config; builds the whole pipeline
@@ -241,6 +242,30 @@ export LLM_MODEL=claude-haiku-4-5   # fast + cheap is ideal for this batch job
 make index LIMIT=200
 ```
 
+## Trust & quality scoring
+
+Relevance alone isn't enough: an abandoned or spammy server shouldn't outrank a
+solid one just because its description matches the words. At index time each MCP
+gets a 0..1 **trust prior** (`internal/trust`, `TRUST`):
+
+- `heuristic` (default, offline): combines **popularity** (stars, log-scaled),
+  **recency** (last update), and **completeness** (has a description, tools, a
+  way to connect, categories).
+- `llm`: adds a model's judgment of clarity/legitimacy and risk flags, averaged
+  with the heuristic signals (falls back to heuristic on failure).
+- `none`: no prior.
+
+At search time the prior is blended into ranking by `TRUST_WEIGHT` (default
+`0.15`):
+
+```
+final = (1 - TRUST_WEIGHT) * relevance + TRUST_WEIGHT * trust
+```
+
+`relevance` is rank-based, so a modest weight only reorders among
+comparably-relevant results — trust breaks ties toward better servers without
+overriding a clearly more relevant match. `TRUST_WEIGHT=0` disables it.
+
 ## Retrieval pipeline
 
 At query time (`internal/search`):
@@ -253,7 +278,9 @@ At query time (`internal/search`):
 3. **Rerank** the pool — the `lexical` reranker scores query-term coverage over
    each candidate's full capability text; the `llm` reranker asks a model to
    order the shortlist.
-4. **Truncate** to `top_k`.
+4. **Blend trust** — nudge the order by each result's stored trust prior
+   (see above).
+5. **Truncate** to `top_k`.
 
 Sparse vectors are always stored, so `HYBRID` and `RERANKER` can be changed at
 query time without re-indexing. Tune the shortlist size with `RERANK_POOL`.
@@ -322,7 +349,8 @@ Implemented: registry + **GitHub crawler** + file sources (combinable via a
 multi-source), **identity resolution** (dedupe/merge across sources), **live
 tool extraction** (remote `tools/list` probing, with **per-server
 authentication**), **enrichment pipeline (heuristic + LLM capability
-cards with synthetic queries)**, multi-representation indexing
+cards with synthetic queries)**, **trust/quality scoring (heuristic + LLM)
+blended into ranking**, multi-representation indexing
 (server/tool/query), **hybrid retrieval (dense + sparse, RRF) with lexical/LLM
 reranking**, Qdrant store, the three discovery tools, hash + OpenAI-compatible
 embedders, and an **evaluation harness** with a golden set and ablation.

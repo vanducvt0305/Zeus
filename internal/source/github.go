@@ -185,6 +185,9 @@ func (g *GitHub) repoToMCP(ctx context.Context, r ghRepo) model.MCP {
 	}
 	m.Source = "github"
 	m.UpdatedAt = r.PushedAt
+	if m.Popularity == 0 {
+		m.Popularity = r.Stars
+	}
 	m.Categories = mergeCategories(m.Categories, filterTopics(r.Topics))
 	return m
 }

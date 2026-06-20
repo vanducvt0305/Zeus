@@ -50,6 +50,14 @@ type MCP struct {
 	Source      string      `json:"source"`              // primary source: "registry", "github", ...
 	Sources     []string    `json:"sources,omitempty"`   // all sources after identity resolution
 	UpdatedAt   string      `json:"updatedAt,omitempty"` // RFC3339 from the source, if known
+	Popularity  int         `json:"popularity,omitempty"` // e.g. GitHub stars, when known
+
+	// Trust is a 0..1 quality/trust prior set by the trust-scoring stage and
+	// blended into ranking so better MCPs surface first. TrustRationale and
+	// TrustFlags are optional explanations (filled by the LLM scorer).
+	Trust          float64  `json:"trust,omitempty"`
+	TrustRationale string   `json:"trustRationale,omitempty"`
+	TrustFlags     []string `json:"trustFlags,omitempty"`
 
 	// Enrichment is the generated "capability card". It is empty until the
 	// enrichment stage runs, and is what gives search its quality: it rewrites

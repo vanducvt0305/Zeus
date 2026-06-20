@@ -18,6 +18,7 @@ import (
 	"github.com/vanducvt0305/zeus/internal/source"
 	"github.com/vanducvt0305/zeus/internal/sparse"
 	"github.com/vanducvt0305/zeus/internal/store"
+	"github.com/vanducvt0305/zeus/internal/trust"
 )
 
 // Indexer orchestrates one indexing pass: source → extract tools → enrich →
@@ -26,6 +27,7 @@ type Indexer struct {
 	Source    source.Source
 	Extractor extract.Extractor
 	Enricher  enrich.Enricher
+	Trust     trust.Scorer
 	Embedder  embed.Embedder
 	Sparse    sparse.Encoder
 	Store     store.Store
@@ -79,6 +81,7 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 
 	mcps = ix.extractAll(ctx, mcps)
 	mcps = ix.enrichAll(ctx, mcps)
+	mcps = ix.scoreTrustAll(ctx, mcps)
 
 	if err := ix.Store.EnsureCollection(ctx, ix.Embedder.Dim()); err != nil {
 		return 0, fmt.Errorf("ensuring collection: %w", err)
@@ -186,6 +189,35 @@ func (ix *Indexer) enrichAll(ctx context.Context, mcps []model.MCP) []model.MCP 
 	}
 	if failures > 0 {
 		log.Printf("enrichment completed with %d failures (used fallback)", failures)
+	}
+	return out
+}
+
+// scoreTrustAll assigns each MCP a trust prior. Best-effort: a failure keeps
+// whatever (deterministic) score the scorer returned.
+func (ix *Indexer) scoreTrustAll(ctx context.Context, mcps []model.MCP) []model.MCP {
+	scorer := ix.Trust
+	if scorer == nil {
+		scorer = trust.Noop{}
+	}
+	if _, isNoop := scorer.(trust.Noop); isNoop {
+		return mcps
+	}
+	log.Printf("scoring trust for %d MCPs with %q...", len(mcps), scorer.Name())
+	out := make([]model.MCP, len(mcps))
+	failures := 0
+	for i, m := range mcps {
+		scored, err := scorer.Score(ctx, m)
+		if err != nil {
+			failures++
+			if failures <= 5 {
+				log.Printf("warning: %v", err)
+			}
+		}
+		out[i] = scored
+	}
+	if failures > 0 {
+		log.Printf("trust scoring completed with %d failures (used fallback)", failures)
 	}
 	return out
 }

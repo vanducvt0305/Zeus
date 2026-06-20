@@ -20,6 +20,7 @@ import (
 	"github.com/vanducvt0305/zeus/internal/source"
 	"github.com/vanducvt0305/zeus/internal/sparse"
 	"github.com/vanducvt0305/zeus/internal/store"
+	"github.com/vanducvt0305/zeus/internal/trust"
 )
 
 // Config holds every tunable value, sourced from environment variables.
@@ -63,6 +64,12 @@ type Config struct {
 	// to the requested top-k.
 	RerankPool int
 
+	// Trust scorer selection (index-time): "heuristic" (default), "llm", "none".
+	Trust string
+	// TrustWeight (search-time) is how much the stored trust prior influences
+	// final ranking, 0..1. 0 disables the blend.
+	TrustWeight float64
+
 	// Source selection for the indexer: "registry" (default), "github", "file".
 	Source        string
 	RegistryURL   string
@@ -102,6 +109,9 @@ func Load() Config {
 		Hybrid:     envBool("HYBRID", true),
 		Reranker:   env("RERANKER", "lexical"),
 		RerankPool: envInt("RERANK_POOL", 30),
+
+		Trust:       env("TRUST", "heuristic"),
+		TrustWeight: envFloat("TRUST_WEIGHT", 0.15),
 
 		Source:        env("SOURCE", "registry"),
 		RegistryURL:   env("REGISTRY_URL", ""),
@@ -152,6 +162,24 @@ func (c Config) newSingleSource(name string) (source.Source, error) {
 // NewSparseEncoder builds the sparse (keyword) encoder used for hybrid search.
 func (c Config) NewSparseEncoder() sparse.Encoder {
 	return sparse.Lexical{}
+}
+
+// NewTrustScorer builds the configured index-time trust scorer.
+func (c Config) NewTrustScorer() (trust.Scorer, error) {
+	switch c.Trust {
+	case "", "heuristic":
+		return trust.Heuristic{}, nil
+	case "none", "noop":
+		return trust.Noop{}, nil
+	case "llm":
+		client, err := c.newLLMClient()
+		if err != nil {
+			return nil, err
+		}
+		return trust.NewLLM(client), nil
+	default:
+		return nil, fmt.Errorf("unknown TRUST %q (want \"heuristic\", \"llm\" or \"none\")", c.Trust)
+	}
 }
 
 // NewReranker builds the configured reranker.
@@ -253,12 +281,13 @@ func (c Config) NewSearchService() (*search.Service, error) {
 		return nil, err
 	}
 	return &search.Service{
-		Embedder: emb,
-		Sparse:   c.NewSparseEncoder(),
-		Store:    st,
-		Reranker: rr,
-		Hybrid:   c.Hybrid,
-		Pool:     c.RerankPool,
+		Embedder:    emb,
+		Sparse:      c.NewSparseEncoder(),
+		Store:       st,
+		Reranker:    rr,
+		Hybrid:      c.Hybrid,
+		Pool:        c.RerankPool,
+		TrustWeight: c.TrustWeight,
 	}, nil
 }
 
@@ -290,6 +319,15 @@ func splitList(v string) []string {
 		}
 	}
 	return out
+}
+
+func envFloat(key string, def float64) float64 {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return def
 }
 
 func envBool(key string, def bool) bool {

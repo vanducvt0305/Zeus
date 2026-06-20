@@ -7,6 +7,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/vanducvt0305/zeus/internal/embed"
 	"github.com/vanducvt0305/zeus/internal/rerank"
@@ -14,7 +15,7 @@ import (
 	"github.com/vanducvt0305/zeus/internal/store"
 )
 
-// Service runs the retrieve-then-rerank pipeline.
+// Service runs the retrieve → rerank → trust-blend pipeline.
 type Service struct {
 	Embedder embed.Embedder
 	Sparse   sparse.Encoder  // used only when Hybrid is true
@@ -26,6 +27,9 @@ type Service struct {
 	// Pool is the first-stage candidate count handed to the reranker before
 	// truncating to top-k.
 	Pool int
+	// TrustWeight (0..1) blends each result's stored trust prior into the final
+	// ranking, so better servers win among comparably-relevant ones. 0 disables.
+	TrustWeight float64
 }
 
 // Search returns up to topK MCPs for the query.
@@ -62,8 +66,40 @@ func (s *Service) Search(ctx context.Context, query string, topK int, filter sto
 		}
 	}
 
+	hits = s.blendTrust(hits)
+
 	if len(hits) > topK {
 		hits = hits[:topK]
 	}
 	return hits, nil
+}
+
+// blendTrust nudges the relevance ranking with each result's trust prior:
+//
+//	final = (1-w)*relevance + w*trust
+//
+// relevance is a rank-based score (1 at the top, decaying down the list), so a
+// modest weight only reorders among comparably-relevant results rather than
+// overriding relevance. With w=0 or uniform trust, the order is unchanged.
+func (s *Service) blendTrust(hits []store.Hit) []store.Hit {
+	if s.TrustWeight <= 0 || len(hits) < 2 {
+		return hits
+	}
+	w := s.TrustWeight
+	n := float64(len(hits))
+	type scored struct {
+		hit   store.Hit
+		final float64
+	}
+	ranked := make([]scored, len(hits))
+	for i, h := range hits {
+		relevance := 1 - float64(i)/n
+		ranked[i] = scored{hit: h, final: (1-w)*relevance + w*h.MCP.Trust}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].final > ranked[j].final })
+	out := make([]store.Hit, len(ranked))
+	for i, r := range ranked {
+		out[i] = r.hit
+	}
+	return out
 }

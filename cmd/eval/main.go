@@ -61,7 +61,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("extractor: %v", err)
 		}
+		tr, err := cfg.NewTrustScorer()
+		if err != nil {
+			log.Fatalf("trust scorer: %v", err)
+		}
 		ix := index.New(source.NewFile(*fixtures), ext, enr, svc.Embedder, cfg.NewSparseEncoder(), svc.Store)
+		ix.Trust = tr
 		log.Printf("indexing fixtures (enricher=%s, embedder=%s, collection=%s)...", enr.Name(), svc.Embedder.Name(), cfg.QdrantCollection)
 		if _, err := ix.Run(ctx, 0); err != nil {
 			log.Fatalf("indexing fixtures: %v", err)

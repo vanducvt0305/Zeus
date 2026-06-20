@@ -73,6 +73,9 @@ func Merge(group []model.MCP) model.MCP {
 		base.Homepage = firstNonEmpty(base.Homepage, m.Homepage)
 		base.UpdatedAt = firstNonEmpty(base.UpdatedAt, m.UpdatedAt)
 
+		if m.Popularity > base.Popularity {
+			base.Popularity = m.Popularity
+		}
 		base.Transports = unionTransports(base.Transports, m.Transports)
 		base.Packages = unionPackages(base.Packages, m.Packages)
 		base.Tools = unionTools(base.Tools, m.Tools)
