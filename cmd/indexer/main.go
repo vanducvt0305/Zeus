@@ -56,6 +56,7 @@ func main() {
 	}
 	ix := index.New(src, ext, enr, emb, cfg.NewSparseEncoder(), st)
 	ix.ExtractConcurrency = cfg.ExtractConcurrency
+	ix.Concurrency = cfg.IndexConcurrency
 	ix.Prune = cfg.IndexPrune
 	ix.Trust = tr
 

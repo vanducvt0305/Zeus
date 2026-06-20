@@ -36,6 +36,9 @@ type Indexer struct {
 	BatchSize int
 	// ExtractConcurrency bounds how many servers are probed for tools at once.
 	ExtractConcurrency int
+	// Concurrency bounds the enrichment and trust stages, which are
+	// LLM/network-bound and otherwise painfully slow when run serially.
+	Concurrency int
 	// Prune deletes a (re)indexed MCP's existing points before upserting, so
 	// tools/queries removed since the last run don't linger as orphans.
 	Prune bool
@@ -60,6 +63,7 @@ func New(src source.Source, ext extract.Extractor, enr enrich.Enricher, emb embe
 		Store:              st,
 		BatchSize:          64,
 		ExtractConcurrency: 8,
+		Concurrency:        8,
 		Prune:              true,
 	}
 }
@@ -181,31 +185,15 @@ func (ix *Indexer) extractAll(ctx context.Context, mcps []model.MCP) []model.MCP
 	return out
 }
 
-// enrichAll runs the enricher over every MCP. Enrichment is best-effort: a
-// failure on one record logs a warning and keeps whatever (heuristic) card the
-// enricher returned, rather than dropping the record.
+// enrichAll runs the enricher over every MCP concurrently. Best-effort: a
+// failure logs a warning and keeps whatever (heuristic) fallback the enricher
+// returned, rather than dropping the record.
 func (ix *Indexer) enrichAll(ctx context.Context, mcps []model.MCP) []model.MCP {
-	log.Printf("enriching %d MCPs with %q...", len(mcps), ix.Enricher.Name())
-	out := make([]model.MCP, len(mcps))
-	failures := 0
-	for i, m := range mcps {
-		enriched, err := ix.Enricher.Enrich(ctx, m)
-		if err != nil {
-			failures++
-			if failures <= 5 {
-				log.Printf("warning: %v", err)
-			}
-		}
-		out[i] = enriched
-	}
-	if failures > 0 {
-		log.Printf("enrichment completed with %d failures (used fallback)", failures)
-	}
-	return out
+	log.Printf("enriching %d MCPs with %q (concurrency=%d)...", len(mcps), ix.Enricher.Name(), ix.concurrency())
+	return ix.concurrentMap(ctx, mcps, "enrichment", ix.Enricher.Enrich)
 }
 
-// scoreTrustAll assigns each MCP a trust prior. Best-effort: a failure keeps
-// whatever (deterministic) score the scorer returned.
+// scoreTrustAll assigns each MCP a trust prior concurrently. Best-effort.
 func (ix *Indexer) scoreTrustAll(ctx context.Context, mcps []model.MCP) []model.MCP {
 	scorer := ix.Trust
 	if scorer == nil {
@@ -214,21 +202,46 @@ func (ix *Indexer) scoreTrustAll(ctx context.Context, mcps []model.MCP) []model.
 	if _, isNoop := scorer.(trust.Noop); isNoop {
 		return mcps
 	}
-	log.Printf("scoring trust for %d MCPs with %q...", len(mcps), scorer.Name())
+	log.Printf("scoring trust for %d MCPs with %q (concurrency=%d)...", len(mcps), scorer.Name(), ix.concurrency())
+	return ix.concurrentMap(ctx, mcps, "trust scoring", scorer.Score)
+}
+
+func (ix *Indexer) concurrency() int {
+	if ix.Concurrency <= 0 {
+		return 8
+	}
+	return ix.Concurrency
+}
+
+// concurrentMap applies fn to every MCP with bounded concurrency, preserving
+// order. Errors are counted and the (fallback) result fn returned is kept.
+func (ix *Indexer) concurrentMap(ctx context.Context, mcps []model.MCP, label string, fn func(context.Context, model.MCP) (model.MCP, error)) []model.MCP {
 	out := make([]model.MCP, len(mcps))
+	sem := make(chan struct{}, ix.concurrency())
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	failures := 0
 	for i, m := range mcps {
-		scored, err := scorer.Score(ctx, m)
-		if err != nil {
-			failures++
-			if failures <= 5 {
-				log.Printf("warning: %v", err)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, m model.MCP) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			r, err := fn(ctx, m)
+			out[i] = r
+			if err != nil {
+				mu.Lock()
+				failures++
+				if failures <= 5 {
+					log.Printf("warning: %v", err)
+				}
+				mu.Unlock()
 			}
-		}
-		out[i] = scored
+		}(i, m)
 	}
+	wg.Wait()
 	if failures > 0 {
-		log.Printf("trust scoring completed with %d failures (used fallback)", failures)
+		log.Printf("%s completed with %d failures (used fallback)", label, failures)
 	}
 	return out
 }

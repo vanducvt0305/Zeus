@@ -43,6 +43,8 @@ type Config struct {
 	// IndexPrune deletes a (re)indexed MCP's existing points before upserting,
 	// so removed tools/queries don't linger as orphans.
 	IndexPrune bool
+	// IndexConcurrency bounds the LLM/network-bound enrich and trust stages.
+	IndexConcurrency int
 
 	ExtractTools       bool
 	ExtractConcurrency int
@@ -99,6 +101,7 @@ func Load() Config {
 		EmbedDim:     envInt("EMBED_DIM", 256),
 
 		IndexPrune:         envBool("INDEX_PRUNE", true),
+		IndexConcurrency:   envInt("INDEX_CONCURRENCY", 8),
 		ExtractTools:       envBool("EXTRACT_TOOLS", false),
 		ExtractConcurrency: envInt("EXTRACT_CONCURRENCY", 8),
 		ExtractTimeout:     envInt("EXTRACT_TIMEOUT", 20),

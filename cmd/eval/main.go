@@ -67,6 +67,7 @@ func main() {
 		}
 		ix := index.New(source.NewFile(*fixtures), ext, enr, svc.Embedder, cfg.NewSparseEncoder(), svc.Store)
 		ix.Trust = tr
+		ix.Concurrency = cfg.IndexConcurrency
 		log.Printf("indexing fixtures (enricher=%s, embedder=%s, collection=%s)...", enr.Name(), svc.Embedder.Name(), cfg.QdrantCollection)
 		if _, err := ix.Run(ctx, 0); err != nil {
 			log.Fatalf("indexing fixtures: %v", err)

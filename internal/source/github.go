@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vanducvt0305/zeus/internal/model"
@@ -70,18 +71,23 @@ type ghSearchResp struct {
 	Items      []ghRepo `json:"items"`
 }
 
-func (g *GitHub) Fetch(ctx context.Context, limit int) ([]model.MCP, error) {
-	seen := make(map[string]struct{})
-	var out []model.MCP
+// githubMapConcurrency bounds parallel server.json fetches during mapping.
+const githubMapConcurrency = 10
 
+func (g *GitHub) Fetch(ctx context.Context, limit int) ([]model.MCP, error) {
+	// First collect the distinct repositories to consider (cheap, ordered),
+	// then map them to records concurrently (each map may fetch server.json).
+	seen := make(map[string]struct{})
+	var repos []ghRepo
+collect:
 	for _, q := range g.queries {
-		repos, err := g.searchAll(ctx, q, limit, len(out))
+		found, err := g.searchAll(ctx, q, limit, len(repos))
 		if err != nil {
-			// Best-effort across queries: a rate-limited or failing query should
-			// not discard what other queries already found.
+			// Best-effort: a rate-limited or failing query should not discard
+			// what other queries already found.
 			log.Printf("github: query %q stopped early: %v", q, err)
 		}
-		for _, r := range repos {
+		for _, r := range found {
 			if r.Archived || r.FullName == "" {
 				continue
 			}
@@ -89,12 +95,26 @@ func (g *GitHub) Fetch(ctx context.Context, limit int) ([]model.MCP, error) {
 				continue
 			}
 			seen[r.FullName] = struct{}{}
-			out = append(out, g.repoToMCP(ctx, r))
-			if limit > 0 && len(out) >= limit {
-				return out, nil
+			repos = append(repos, r)
+			if limit > 0 && len(repos) >= limit {
+				break collect
 			}
 		}
 	}
+
+	out := make([]model.MCP, len(repos))
+	sem := make(chan struct{}, githubMapConcurrency)
+	var wg sync.WaitGroup
+	for i, r := range repos {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, r ghRepo) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			out[i] = g.repoToMCP(ctx, r)
+		}(i, r)
+	}
+	wg.Wait()
 	return out, nil
 }
 
