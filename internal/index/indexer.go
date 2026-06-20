@@ -14,6 +14,7 @@ import (
 	"github.com/vanducvt0305/zeus/internal/enrich"
 	"github.com/vanducvt0305/zeus/internal/extract"
 	"github.com/vanducvt0305/zeus/internal/model"
+	"github.com/vanducvt0305/zeus/internal/resolve"
 	"github.com/vanducvt0305/zeus/internal/source"
 	"github.com/vanducvt0305/zeus/internal/sparse"
 	"github.com/vanducvt0305/zeus/internal/store"
@@ -70,6 +71,11 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 		return 0, fmt.Errorf("fetching from source: %w", err)
 	}
 	log.Printf("fetched %d MCPs", len(mcps))
+
+	if resolved := resolve.Dedup(mcps); len(resolved) < len(mcps) {
+		log.Printf("identity resolution: merged %d records into %d distinct MCPs", len(mcps), len(resolved))
+		mcps = resolved
+	}
 
 	mcps = ix.extractAll(ctx, mcps)
 	mcps = ix.enrichAll(ctx, mcps)

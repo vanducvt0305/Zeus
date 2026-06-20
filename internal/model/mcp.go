@@ -47,7 +47,8 @@ type MCP struct {
 	Transports  []Transport `json:"transports,omitempty"`
 	Packages    []Package   `json:"packages,omitempty"`
 	Tools       []Tool      `json:"tools,omitempty"`
-	Source      string      `json:"source"`              // "registry", "github", ...
+	Source      string      `json:"source"`              // primary source: "registry", "github", ...
+	Sources     []string    `json:"sources,omitempty"`   // all sources after identity resolution
 	UpdatedAt   string      `json:"updatedAt,omitempty"` // RFC3339 from the source, if known
 
 	// Enrichment is the generated "capability card". It is empty until the

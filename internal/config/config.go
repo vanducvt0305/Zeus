@@ -111,20 +111,41 @@ func Load() Config {
 	}
 }
 
-// NewSource builds the configured indexing source.
+// NewSource builds the configured indexing source. SOURCE may be a single name
+// or a comma-separated list (e.g. "registry,github"); a list yields a Multi
+// source whose duplicates are merged by the indexer's resolve stage.
 func (c Config) NewSource() (source.Source, error) {
-	switch c.Source {
+	names := splitList(c.Source)
+	if len(names) == 0 {
+		names = []string{"registry"}
+	}
+	srcs := make([]source.Source, 0, len(names))
+	for _, n := range names {
+		s, err := c.newSingleSource(n)
+		if err != nil {
+			return nil, err
+		}
+		srcs = append(srcs, s)
+	}
+	if len(srcs) == 1 {
+		return srcs[0], nil
+	}
+	return source.NewMulti(srcs...), nil
+}
+
+func (c Config) newSingleSource(name string) (source.Source, error) {
+	switch name {
 	case "", "registry":
 		return source.NewRegistry(c.RegistryURL), nil
 	case "github":
 		return source.NewGitHub(c.GitHubToken, c.GitHubQueries), nil
 	case "file":
 		if c.SourceFile == "" {
-			return nil, fmt.Errorf("SOURCE_FILE is required when SOURCE=file")
+			return nil, fmt.Errorf("SOURCE_FILE is required when SOURCE includes \"file\"")
 		}
 		return source.NewFile(c.SourceFile), nil
 	default:
-		return nil, fmt.Errorf("unknown SOURCE %q (want \"registry\", \"github\" or \"file\")", c.Source)
+		return nil, fmt.Errorf("unknown source %q (want \"registry\", \"github\" or \"file\")", name)
 	}
 }
 

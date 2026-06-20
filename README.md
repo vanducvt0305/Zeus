@@ -13,11 +13,11 @@ agent can call to discover capabilities at runtime. Think of it as
 ## How it works
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  INDEXER  (cmd/indexer, run periodically)             │
-│  source → extract tools → enrich → embed → upsert     │
-│  Official MCP Registry  ──►  Qdrant                   │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  INDEXER  (cmd/indexer, run periodically)                      │
+│  sources → resolve identity → extract tools → enrich → embed   │
+│  registry / GitHub / file  ──►  dedupe  ──►  Qdrant            │
+└──────────────────────────────────────────────────────────────┘
                      │
               ┌──────▼──────┐
               │   Qdrant    │   vectors + MCP metadata
@@ -66,7 +66,8 @@ cmd/
   eval/        CLI that scores search quality against a golden set
 internal/
   model/       normalized MCP schema + capability card (one shape for every source)
-  source/      catalogs of MCPs (Source: official registry + GitHub crawler + file)
+  source/      catalogs of MCPs (registry + GitHub crawler + file + multi)
+  resolve/     identity resolution: dedupe/merge the same MCP across sources
   extract/     Extractor interface + remote tools/list probing (real tools)
   enrich/      Enricher interface + heuristic (offline) + LLM capability cards
   llm/         Client interface + Anthropic + OpenAI-compatible chat
@@ -75,7 +76,7 @@ internal/
   store/       Store interface + Qdrant impl (named dense+sparse, RRF fusion)
   rerank/      Reranker interface + lexical (offline) + LLM reranker
   search/      query pipeline: embed → hybrid retrieve → rerank → top-k
-  index/       indexer: source → extract → enrich → embed(+sparse) → store
+  index/       indexer: sources → resolve → extract → enrich → embed → store
   server/      the three MCP tools
   eval/        IR metrics (Hit@1, Recall@k, MRR, nDCG@k) + runner
   config/      env-driven config; builds the whole pipeline
@@ -137,13 +138,38 @@ The indexer pulls MCPs from a `source.Source`, selected with `SOURCE`:
 | `github` | GitHub repository search by MCP topics; parses a root `server.json` when present, else builds from repo metadata (description, topics, homepage). Set `GITHUB_TOKEN` to raise the search rate limit; `GITHUB_QUERIES` overrides the default topic queries. |
 | `file` | A local JSON catalog at `SOURCE_FILE` — for hand-declared MCPs or fixtures. |
 
+`SOURCE` may also be a comma-separated list — e.g. `SOURCE=registry,github` — to
+crawl several catalogs in one pass; the duplicates they produce are merged by
+identity resolution (below).
+
 ```bash
-make index           # registry
-make index-github    # GitHub (GITHUB_TOKEN=... recommended)
+make index                       # registry
+make index-github                # GitHub (GITHUB_TOKEN=... recommended)
+SOURCE=registry,github make index
 ```
 
-Records from every source share the same normalized schema, so extraction,
-enrichment, indexing, and search treat them identically.
+Records from every source share the same normalized schema, so resolution,
+extraction, enrichment, indexing, and search treat them identically.
+
+## Identity resolution
+
+The same server can surface in more than one source; indexing both would return
+duplicate, half-complete results. After fetching, the indexer dedupes
+(`internal/resolve`):
+
+- **Identity is the canonical name** (the reverse-DNS id every source uses, e.g.
+  `io.github.acme/search`). Two records with the same name are the same MCP.
+- **Repository URL is deliberately *not* identity** — a monorepo hosts many
+  distinct servers behind one repo, so keying on it would wrongly collapse them.
+  It is only a fallback for records that have no name.
+- **Merging** keeps the highest-priority source's scalar fields
+  (`registry` > `github` > `file`), fills gaps from the others, and unions list
+  fields (transports, packages, tools, categories). Every contributing source is
+  recorded in `sources` for provenance.
+
+So a server in both the registry (connection details) and the GitHub crawl
+(repo, stars, topics) — or extracted tools from one and metadata from the other
+— becomes a single, richer record.
 
 ## Tool extraction
 
@@ -292,9 +318,10 @@ Defaults run end-to-end with `docker compose up -d` and no further setup.
 
 ## Status & roadmap
 
-Implemented: registry + **GitHub crawler** + file sources, **live tool extraction**
-(remote `tools/list` probing, with **per-server authentication**), **enrichment
-pipeline (heuristic + LLM capability
+Implemented: registry + **GitHub crawler** + file sources (combinable via a
+multi-source), **identity resolution** (dedupe/merge across sources), **live
+tool extraction** (remote `tools/list` probing, with **per-server
+authentication**), **enrichment pipeline (heuristic + LLM capability
 cards with synthetic queries)**, multi-representation indexing
 (server/tool/query), **hybrid retrieval (dense + sparse, RRF) with lexical/LLM
 reranking**, Qdrant store, the three discovery tools, hash + OpenAI-compatible
@@ -304,8 +331,6 @@ Natural next steps:
 
 - **More sources.** Aggregators (mcp.so, Smithery, Glama) — just add a
   `source.Source`.
-- **Identity resolution.** The same MCP can appear in both the registry and the
-  GitHub crawl; dedupe to a canonical entity before indexing.
 - **OAuth extraction.** Static tokens/headers are supported; add the SDK's
   OAuth flow for servers that require interactive authorization.
 - **Model-based cross-encoder.** The `Reranker` interface already supports it;
