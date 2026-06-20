@@ -1,5 +1,6 @@
-# Build and publish the MCP server image to GitHub Container Registry on a
-# version tag (e.g. `git tag v0.1.0 && git push --tags`). Runs on a clean
+# Build and publish the MCP server image to GitHub Container Registry. Triggers
+# on a version tag (`git tag v0.1.0 && git push --tags`) or a manual dispatch
+# (Actions tab → Run workflow, or the API) with a version input. Runs on a clean
 # network, so it builds the standard (non-vendored) Dockerfile. After it
 # publishes ghcr.io/<owner>/zeus, publish server.json to the MCP registry with
 # `mcp-publisher` (see README → Publishing & listing).
@@ -8,6 +9,11 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version tag (e.g. 0.1.0)"
+        default: "0.1.0"
 
 jobs:
   image:
@@ -32,6 +38,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/zeus
           tags: |
             type=semver,pattern={{version}}
+            type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest
 
       - name: Build and push
@@ -41,3 +48,4 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
