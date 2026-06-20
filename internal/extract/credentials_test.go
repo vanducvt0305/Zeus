@@ -55,7 +55,7 @@ func TestAuthHeadersReachTheWire(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := NewRemoteWithAuth(5*time.Second, NewCredentials("secret", nil))
+	r := NewRemoteWithAuth(5*time.Second, NewCredentials("secret", nil), true)
 	client := r.httpClientFor(r.creds.Headers("mcp", srv.URL))
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)

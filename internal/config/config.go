@@ -38,19 +38,18 @@ type Config struct {
 	EmbedModel   string
 	EmbedDim     int
 
-	// ExtractTools, when true, connects to each server's remote endpoint and
-	// calls tools/list to recover its real tools before enrichment/indexing.
 	// IndexPrune deletes a (re)indexed MCP's existing points before upserting,
 	// so removed tools/queries don't linger as orphans.
 	IndexPrune bool
 	// IndexConcurrency bounds the LLM/network-bound enrich and trust stages.
 	IndexConcurrency int
 
-	ExtractTools       bool
-	ExtractConcurrency int
-	ExtractTimeout     int    // seconds, per connection attempt
-	ExtractAuthToken   string // global bearer token for tools/list probing
-	ExtractCredentials string // path to a per-server credentials JSON file
+	ExtractTools        bool
+	ExtractConcurrency  int
+	ExtractTimeout      int    // seconds, per connection attempt
+	ExtractAuthToken    string // global bearer token for tools/list probing
+	ExtractCredentials  string // path to a per-server credentials JSON file
+	ExtractAllowPrivate bool   // allow probing private/loopback addresses (unsafe)
 
 	// Enricher selection: "heuristic" (offline default), "llm", or "none".
 	Enricher string
@@ -100,13 +99,14 @@ func Load() Config {
 		EmbedModel:   env("EMBED_MODEL", "nomic-embed-text"),
 		EmbedDim:     envInt("EMBED_DIM", 256),
 
-		IndexPrune:         envBool("INDEX_PRUNE", true),
-		IndexConcurrency:   envInt("INDEX_CONCURRENCY", 8),
-		ExtractTools:       envBool("EXTRACT_TOOLS", false),
-		ExtractConcurrency: envInt("EXTRACT_CONCURRENCY", 8),
-		ExtractTimeout:     envInt("EXTRACT_TIMEOUT", 20),
-		ExtractAuthToken:   env("EXTRACT_AUTH_TOKEN", ""),
-		ExtractCredentials: env("EXTRACT_CREDENTIALS", ""),
+		IndexPrune:          envBool("INDEX_PRUNE", true),
+		IndexConcurrency:    envInt("INDEX_CONCURRENCY", 8),
+		ExtractTools:        envBool("EXTRACT_TOOLS", false),
+		ExtractConcurrency:  envInt("EXTRACT_CONCURRENCY", 8),
+		ExtractTimeout:      envInt("EXTRACT_TIMEOUT", 20),
+		ExtractAuthToken:    env("EXTRACT_AUTH_TOKEN", ""),
+		ExtractCredentials:  env("EXTRACT_CREDENTIALS", ""),
+		ExtractAllowPrivate: envBool("EXTRACT_ALLOW_PRIVATE", false),
 
 		Enricher:    env("ENRICHER", "heuristic"),
 		LLMProvider: env("LLM_PROVIDER", "anthropic"),
@@ -218,7 +218,7 @@ func (c Config) NewExtractor() (extract.Extractor, error) {
 	if err != nil {
 		return nil, err
 	}
-	return extract.NewRemoteWithAuth(time.Duration(c.ExtractTimeout)*time.Second, creds), nil
+	return extract.NewRemoteWithAuth(time.Duration(c.ExtractTimeout)*time.Second, creds, c.ExtractAllowPrivate), nil
 }
 
 // NewEnricher builds the configured enricher.

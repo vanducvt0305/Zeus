@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/vanducvt0305/zeus/internal/httpx"
 )
 
 // OpenAIEmbedder calls any OpenAI-compatible /embeddings endpoint. The same
@@ -65,16 +67,17 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.baseURL+"/embeddings", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if e.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+e.apiKey)
-	}
-
-	resp, err := e.client.Do(req)
+	resp, err := httpx.Do(ctx, e.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.baseURL+"/embeddings", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if e.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+e.apiKey)
+		}
+		return req, nil
+	}, httpx.DefaultRetries)
 	if err != nil {
 		return nil, fmt.Errorf("embeddings request: %w", err)
 	}

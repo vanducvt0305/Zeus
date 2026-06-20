@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/vanducvt0305/zeus/internal/httpx"
 	"github.com/vanducvt0305/zeus/internal/model"
 )
 
@@ -104,11 +105,9 @@ func (r *Registry) fetchPage(ctx context.Context, cursor string, pageSize int) (
 	}
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return registryResponse{}, "", err
-	}
-	resp, err := r.client.Do(req)
+	resp, err := httpx.Do(ctx, r.client, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	}, httpx.DefaultRetries)
 	if err != nil {
 		return registryResponse{}, "", fmt.Errorf("fetching %s: %w", u, err)
 	}

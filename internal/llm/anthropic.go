@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/vanducvt0305/zeus/internal/httpx"
 )
 
 // Anthropic calls the Claude Messages API. A fast, cheap model (e.g.
@@ -74,15 +76,16 @@ func (a *Anthropic) Complete(ctx context.Context, system, user string) (string, 
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", a.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := a.client.Do(req)
+	resp, err := httpx.Do(ctx, a.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", a.apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		return req, nil
+	}, httpx.DefaultRetries)
 	if err != nil {
 		return "", fmt.Errorf("messages request: %w", err)
 	}

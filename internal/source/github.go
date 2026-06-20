@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vanducvt0305/zeus/internal/httpx"
 	"github.com/vanducvt0305/zeus/internal/model"
 )
 
@@ -152,17 +153,18 @@ func (g *GitHub) searchPage(ctx context.Context, query string, page, perPage int
 	qs.Set("sort", "stars")
 	u.RawQuery = qs.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return ghSearchResp{}, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if g.token != "" {
-		req.Header.Set("Authorization", "Bearer "+g.token)
-	}
-
-	resp, err := g.client.Do(req)
+	resp, err := httpx.Do(ctx, g.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if g.token != "" {
+			req.Header.Set("Authorization", "Bearer "+g.token)
+		}
+		return req, nil
+	}, httpx.DefaultRetries)
 	if err != nil {
 		return ghSearchResp{}, fmt.Errorf("github search: %w", err)
 	}
@@ -220,11 +222,9 @@ func (g *GitHub) fetchServerJSON(ctx context.Context, r ghRepo) (serverJSON, boo
 		branch = "main"
 	}
 	rawURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/server.json", r.FullName, branch)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return serverJSON{}, false
-	}
-	resp, err := g.client.Do(req)
+	resp, err := httpx.Do(ctx, g.client, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	}, httpx.DefaultRetries)
 	if err != nil {
 		return serverJSON{}, false
 	}

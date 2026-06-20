@@ -17,40 +17,48 @@ import (
 // the matching auth headers are attached so endpoints that gate tools/list
 // behind auth can be reached.
 type Remote struct {
-	timeout time.Duration
-	creds   *Credentials
+	timeout   time.Duration
+	creds     *Credentials
+	transport *http.Transport // SSRF-guarded dialer, shared by all clients
 	// Anonymous client reused when no credentials apply. No client-level
 	// timeout: the per-attempt context deadline bounds the work, and a client
 	// timeout would break the transport's SSE stream.
 	httpClient *http.Client
 }
 
-// NewRemote builds a Remote extractor with the given per-attempt timeout and no
-// credentials.
+// NewRemote builds a Remote extractor with the given per-attempt timeout, no
+// credentials, and SSRF protection on.
 func NewRemote(timeout time.Duration) *Remote {
-	return NewRemoteWithAuth(timeout, nil)
+	return NewRemoteWithAuth(timeout, nil, false)
 }
 
 // NewRemoteWithAuth builds a Remote extractor that attaches credentials when
-// they match the server being probed.
-func NewRemoteWithAuth(timeout time.Duration, creds *Credentials) *Remote {
+// they match the server being probed. allowPrivate disables the SSRF guard
+// (connecting to private/loopback addresses) — only for trusted/local setups.
+func NewRemoteWithAuth(timeout time.Duration, creds *Credentials, allowPrivate bool) *Remote {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
+	tr := guardedTransport(allowPrivate)
 	return &Remote{
 		timeout:    timeout,
 		creds:      creds,
-		httpClient: &http.Client{},
+		transport:  tr,
+		httpClient: &http.Client{Transport: tr, CheckRedirect: noCrossHostRedirect},
 	}
 }
 
 // httpClientFor returns a client that injects the given auth headers, or the
-// shared anonymous client when there are none.
+// shared anonymous client when there are none. Both dial through the guarded
+// transport and refuse cross-host redirects (so credentials never leak).
 func (r *Remote) httpClientFor(headers map[string]string) *http.Client {
 	if len(headers) == 0 {
 		return r.httpClient
 	}
-	return &http.Client{Transport: headerRoundTripper{base: http.DefaultTransport, headers: headers}}
+	return &http.Client{
+		Transport:     headerRoundTripper{base: r.transport, headers: headers},
+		CheckRedirect: noCrossHostRedirect,
+	}
 }
 
 func (r *Remote) Name() string { return "remote" }

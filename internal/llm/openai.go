@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/vanducvt0305/zeus/internal/httpx"
 )
 
 // OpenAI calls any OpenAI-compatible /chat/completions endpoint, so the same
@@ -66,16 +68,17 @@ func (o *OpenAI) Complete(ctx context.Context, system, user string) (string, err
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if o.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+o.apiKey)
-	}
-
-	resp, err := o.client.Do(req)
+	resp, err := httpx.Do(ctx, o.client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if o.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+o.apiKey)
+		}
+		return req, nil
+	}, httpx.DefaultRetries)
 	if err != nil {
 		return "", fmt.Errorf("chat request: %w", err)
 	}

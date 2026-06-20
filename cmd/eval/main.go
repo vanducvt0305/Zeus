@@ -16,7 +16,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os/signal"
 	"sort"
+	"syscall"
 
 	"github.com/vanducvt0305/zeus/internal/config"
 	"github.com/vanducvt0305/zeus/internal/eval"
@@ -44,7 +46,8 @@ func main() {
 	showFails := flag.Bool("fails", false, "print queries with no relevant result in the top-k")
 	flag.Parse()
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	cfg := config.Load()
 
 	svc, err := cfg.NewSearchService()

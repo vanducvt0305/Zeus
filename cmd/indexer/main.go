@@ -14,6 +14,8 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os/signal"
+	"syscall"
 
 	"github.com/vanducvt0305/zeus/internal/config"
 	"github.com/vanducvt0305/zeus/internal/index"
@@ -60,8 +62,11 @@ func main() {
 	ix.Prune = cfg.IndexPrune
 	ix.Trust = tr
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	log.Printf("indexing (source=%s, extract=%t, enricher=%s, trust=%s, embedder=%s, dim=%d, collection=%s)", src.Name(), cfg.ExtractTools, enr.Name(), tr.Name(), emb.Name(), emb.Dim(), cfg.QdrantCollection)
-	n, err := ix.Run(context.Background(), *limit)
+	n, err := ix.Run(ctx, *limit)
 	if err != nil {
 		log.Fatalf("indexing failed: %v", err)
 	}

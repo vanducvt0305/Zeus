@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"log"
+	"os/signal"
+	"syscall"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/vanducvt0305/zeus/internal/config"
@@ -26,8 +28,11 @@ func main() {
 	log.Printf("starting MCP discovery server (embedder=%s, hybrid=%t, reranker=%s, collection=%s)",
 		svc.Embedder.Name(), cfg.Hybrid, cfg.Reranker, cfg.QdrantCollection)
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	srv := server.New("zeus-mcp-discovery", "0.1.0", svc)
-	if err := srv.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+	if err := srv.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
 }
