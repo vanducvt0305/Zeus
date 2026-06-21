@@ -5,6 +5,9 @@
 # Local env
 .env
 
+# BM25 corpus stats written by the indexer (SPARSE_STATS_PATH)
+/sparse_stats.json
+
 # Go
 *.test
 *.out

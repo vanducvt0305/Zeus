@@ -57,6 +57,12 @@ func (Lexical) Rerank(_ context.Context, query string, hits []store.Hit) ([]stor
 
 	out := make([]store.Hit, len(ranked))
 	for i, r := range ranked {
+		// Carry the reranker's own relevance (query-term coverage, 0..1) on the
+		// hit so the downstream blend can weigh by how strong each match is,
+		// instead of treating every rank step as equal. The first-stage retrieval
+		// score is not comparable across the dense/sparse fusion, so coverage is
+		// the better post-rerank relevance signal.
+		r.hit.Score = float32(r.score)
 		out[i] = r.hit
 	}
 	return out, nil

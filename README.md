@@ -285,13 +285,40 @@ At query time (`internal/search`):
    combines by rank, so the two score scales need not be comparable.
 3. **Rerank** the pool — the `lexical` reranker scores query-term coverage over
    each candidate's full capability text; the `llm` reranker asks a model to
-   order the shortlist.
-4. **Blend trust** — nudge the order by each result's stored trust prior
-   (see above).
-5. **Truncate** to `top_k`.
+   order the shortlist. The reranker's own score becomes the result's relevance.
+4. **Blend** — combine the post-rerank relevance with three priors:
+   **coverage** (`COVERAGE_WEIGHT`, rewards matching on several of an MCP's
+   tools/synthetic queries over a single lucky point), **trust**
+   (`TRUST_WEIGHT`) and **usage** (`USAGE_WEIGHT`). Relevance is min-max
+   normalized across the pool, so the gap between a strong top match and a weak
+   tail is preserved — a modest prior weight only reorders among
+   comparably-relevant results instead of leapfrogging a clearly better match.
+5. **Truncate** to `top_k`, after dropping any result below the request's
+   `min_score` confidence cutoff (if set).
+
+Each result also carries a **`confidence`** (0..1): the absolute, pre-blend
+relevance, so an agent can tell a strong match from the best of a weak field and
+gate on it with `min_score`.
 
 Sparse vectors are always stored, so `HYBRID` and `RERANKER` can be changed at
 query time without re-indexing. Tune the shortlist size with `RERANK_POOL`.
+Repeated queries (agent retries, multi-step plans) are served from a short-lived
+LRU result cache (`SEARCH_CACHE_TTL`/`SEARCH_CACHE_SIZE`, set either to 0 to
+disable) — the pipeline is deterministic for a fixed index, and the TTL bounds
+staleness so fresh index/usage state still surfaces within seconds.
+
+The sparse encoder itself is selectable with `SPARSE`. The default `tf` is
+stateless term-frequency (no corpus state, nothing to coordinate). `bm25` is the
+corpus-aware upgrade: it weights rare terms higher (IDF) and saturates repeated
+terms and long documents, so generic boilerplate ("an MCP server for …") stops
+drowning out the distinctive words. BM25 needs document-frequency statistics, so
+the indexer computes them once and writes them to `SPARSE_STATS_PATH`; the server
+reads the same file to weight queries (the IDF lives on the query side, so the
+dot product Qdrant computes reconstructs the BM25 score). The split keeps a clean
+fallback: if the server can't find the stats it logs and reverts to `tf`.
+Switching `SPARSE` requires re-indexing, since the stored document vectors carry
+the document-side weighting. On the small, well-named eval fixtures BM25 and TF
+score the same — its payoff shows on large, repetitive real-world catalogs.
 
 ## Evaluation
 
@@ -307,6 +334,23 @@ make eval            # index fixtures + score, with the misses listed
 make eval-compare    # ablation: dense-only → +hybrid → +hybrid+rerank
 ```
 
+The default profile uses the offline `hash` embedder — handy for a zero-setup,
+reproducible baseline, but it is **lexical only**, so the features that bridge the
+query/document *vocabulary* gap (LLM/heuristic enrichment, BM25's IDF, semantic
+matching) look weaker than they are. To measure those, run the **semantic
+profile** against a real embedding model (defaults to a local Ollama running
+`nomic-embed-text`; override `EMBED_*` for any OpenAI-compatible endpoint):
+
+```bash
+make eval-semantic              # score with a real embedder
+make eval-semantic-enrichment   # ablation: no enrichment → + heuristic (semantic)
+```
+
+This is where enrichment earns its keep: under a semantic embedder the synthetic
+example queries and task language move results, whereas under the `hash` embedder
+they are roughly neutral. (Numbers depend on the chosen model, so they aren't
+checked in here.)
+
 Ablation on the fixtures (offline `hash` embedder + heuristic enrichment), each
 stage added on top of the previous:
 
@@ -314,7 +358,13 @@ stage added on top of the previous:
 |---|---|---|---|---|
 | dense-only, no rerank | 0.739 | 0.913 | 0.812 | 0.837 |
 | + hybrid (dense+sparse, RRF) | 0.870 | **1.000** | 0.920 | 0.940 |
-| + lexical rerank | **0.913** | **1.000** | **0.949** | **0.962** |
+| + lexical rerank | 0.913 | **1.000** | 0.949 | 0.962 |
+| + coverage blend | **0.957** | **1.000** | **0.978** | **0.984** |
+
+> The last two rows are an A/B on the *same* index (coverage blend off vs on);
+> the coverage prior is the contribution. Absolute numbers wobble ±0.04 between
+> index builds because Qdrant's HNSW graph is non-deterministic — query-time
+> ranking on any given index is exact and reproducible.
 
 Hybrid retrieval finds the right MCP in the top-5 for every query and lifts
 precision-at-1 sharply (exact tool-name matches that the lexical embedder's
@@ -384,14 +434,26 @@ call_mcp({ "mcp_id": "io.github.acme/search", "tool": "web_search",
 ## Usage flywheel
 
 Every `call_mcp` is an implicit signal: the agent *selected* that MCP, and the
-call either *worked or didn't*. The server records this (`internal/usage`) and
-blends a usage prior into ranking (`USAGE_WEIGHT`), so MCPs that agents actually
-use successfully rise over time — a quality signal competitors can't copy
-because it requires real traffic. Tallies persist to `USAGE_PATH` and are
-exposed at `/stats` when hosted.
+call had an outcome. The server records this (`internal/usage`) and blends a
+usage prior into ranking (`USAGE_WEIGHT`), so MCPs that agents actually use
+successfully rise over time — a quality signal competitors can't copy because it
+requires real traffic. Tallies persist to `USAGE_PATH` and are exposed at
+`/stats` when hosted.
+
+The outcome is attributed with care, because the three cases are not equally the
+server's fault:
+
+- **Unreachable** (couldn't connect / no remote endpoint / timeout) — a real
+  serviceability defect; counts fully against the server.
+- **Tool error** (the server ran the tool but it returned an error) — usually
+  the *caller's* bad arguments, not the server's defect, so it earns **partial
+  credit** rather than counting as a failure. Penalizing a working server for the
+  agent's mistakes would just add noise to the prior.
+- **Success** — full credit.
 
 ```
-final = (1 - trustW - usageW)*relevance + trustW*trust + usageW*usage
+final = (1 - covW - trustW - usageW)*relevance
+        + covW*coverage + trustW*trust + usageW*usage
 ```
 
 This is `v1` (implicit signal from call outcomes); explicit task-success
@@ -453,8 +515,9 @@ Natural next steps:
   OAuth flow for servers that require interactive authorization.
 - **Model-based cross-encoder.** The `Reranker` interface already supports it;
   add a hosted cross-encoder (e.g. a BGE reranker behind an HTTP endpoint).
-- **IDF-weighted sparse.** The sparse encoder is stateless TF; persist corpus
-  document-frequencies to upgrade it to BM25.
+- **Corpus-statistics for BM25 at scale.** BM25 (`SPARSE=bm25`) recomputes
+  document frequencies on every full index pass; a streaming/incremental indexer
+  would need to maintain them online instead.
 - **Explicit feedback.** The flywheel already learns from call outcomes; add a
   tool for hosts to report end-task success for an even stronger signal.
 

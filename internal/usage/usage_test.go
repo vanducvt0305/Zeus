@@ -15,11 +15,15 @@ func TestRecordAndScore(t *testing.T) {
 	// A well-used, mostly-successful MCP should score higher than a rarely-used
 	// or failing one.
 	for i := 0; i < 50; i++ {
-		r.Record("good", true)
+		r.Record("good", OutcomeSuccess)
 	}
-	r.Record("rare", true)
+	r.Record("rare", OutcomeSuccess)
 	for i := 0; i < 50; i++ {
-		r.Record("flaky", i%2 == 0) // ~50% success
+		if i%2 == 0 {
+			r.Record("flaky", OutcomeSuccess)
+		} else {
+			r.Record("flaky", OutcomeUnreachable)
+		}
 	}
 
 	if !(r.Score("good") > r.Score("rare")) {
@@ -35,21 +39,39 @@ func TestRecordAndScore(t *testing.T) {
 	}
 }
 
+// TestToolErrorBeatsUnreachable is the #5 fix: a reachable server that the agent
+// mis-called (tool error) must score higher than one that couldn't be reached at
+// all, and lower than one that cleanly succeeded — the prior tracks the server's
+// serviceability, not the caller's bad arguments.
+func TestToolErrorBeatsUnreachable(t *testing.T) {
+	r := NewMemory("")
+	for i := 0; i < 20; i++ {
+		r.Record("clean", OutcomeSuccess)
+		r.Record("misused", OutcomeToolError)
+		r.Record("broken", OutcomeUnreachable)
+	}
+	clean, misused, broken := r.Score("clean"), r.Score("misused"), r.Score("broken")
+	if !(clean > misused && misused > broken) {
+		t.Fatalf("want clean > misused > broken, got %.3f, %.3f, %.3f", clean, misused, broken)
+	}
+}
+
 func TestSnapshotCounts(t *testing.T) {
 	r := NewMemory("")
-	r.Record("a", true)
-	r.Record("a", false)
+	r.Record("a", OutcomeSuccess)
+	r.Record("a", OutcomeToolError)
+	r.Record("a", OutcomeUnreachable)
 	snap := r.Snapshot()
-	if snap["a"].Calls != 2 || snap["a"].Successes != 1 {
-		t.Fatalf("snapshot = %+v, want calls=2 successes=1", snap["a"])
+	if snap["a"].Calls != 3 || snap["a"].Successes != 1 || snap["a"].ToolErrors != 1 {
+		t.Fatalf("snapshot = %+v, want calls=3 successes=1 tool_errors=1", snap["a"])
 	}
 }
 
 func TestPersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "usage.json")
 	r := NewMemory(path)
-	r.Record("a", true)
-	r.Record("a", true)
+	r.Record("a", OutcomeSuccess)
+	r.Record("a", OutcomeSuccess)
 	if err := r.Flush(); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}

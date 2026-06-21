@@ -72,7 +72,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("trust scorer: %v", err)
 		}
-		ix := index.New(source.NewFile(*fixtures), ext, enr, svc.Embedder, cfg.NewSparseEncoder(), svc.Store)
+		ix := index.New(source.NewFile(*fixtures), ext, enr, svc.Embedder, cfg.NewSparseFitter(), svc.Store)
 		ix.Trust = tr
 		ix.Concurrency = cfg.IndexConcurrency
 		log.Printf("indexing fixtures (enricher=%s, embedder=%s, collection=%s)...", enr.Name(), svc.Embedder.Name(), cfg.QdrantCollection)
@@ -88,7 +88,7 @@ func main() {
 
 	// Ranking goes through the exact pipeline the server uses.
 	rank := func(ctx context.Context, query string, topK int) ([]string, error) {
-		hits, err := svc.Search(ctx, query, topK, store.Filter{})
+		hits, err := svc.Search(ctx, query, topK, 0, store.Filter{})
 		if err != nil {
 			return nil, err
 		}

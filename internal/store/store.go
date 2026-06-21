@@ -60,6 +60,16 @@ type Hit struct {
 	Score     float32
 	MatchKind Kind   // whether the best match was server- or tool-level
 	ToolName  string // the matched tool, when MatchKind == KindTool
+	// MatchCount is how many of this MCP's representations (server/tool/query
+	// points) surfaced in the first-stage candidate pool. An MCP that matches on
+	// several tools and synthetic queries is a stronger signal than one that
+	// matches on a single point; the search pipeline rewards this coverage.
+	MatchCount int
+	// Confidence is an absolute (not rank-relative) 0..1 estimate of how well the
+	// MCP matches the query, taken from the post-rerank relevance score before it
+	// is blended with the trust/usage priors. It is most meaningful with a
+	// reranker enabled. Search sets it; the store leaves it zero.
+	Confidence float32
 }
 
 // SearchQuery is one search request. When Sparse is non-empty, retrieval runs

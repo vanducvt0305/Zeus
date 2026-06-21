@@ -4,10 +4,15 @@
 // an agent often types verbatim. Fusing the two (see store hybrid search)
 // recovers matches that either alone would lose.
 //
-// The encoder is stateless and deterministic: a term maps to a fixed hashed id
-// with no corpus statistics. That means the indexer and the server always agree
-// on the representation without sharing any state, at the cost of not using IDF
-// (a natural future upgrade once corpus stats are persisted).
+// Two encoders are provided. Lexical is stateless TF: a term maps to a fixed
+// hashed id with no corpus statistics, so the indexer and server always agree
+// without sharing state. BM25 is the stronger, corpus-aware option: it weights
+// rare terms higher (IDF) and saturates repeated terms and long documents, at
+// the cost of needing document-frequency statistics computed at index time and
+// reused at query time (see Fitter / Stats). Both split the weighting into a
+// document side (EncodeDoc, stored) and a query side (Encode); for Lexical the
+// two are identical, for BM25 the IDF lives on the query side so the dot product
+// Qdrant computes between query and document reconstructs the BM25 score.
 package sparse
 
 import (
@@ -27,17 +32,36 @@ type Vector struct {
 // Empty reports whether the vector has no terms.
 func (v Vector) Empty() bool { return len(v.Indices) == 0 }
 
-// Encoder turns text into a sparse vector.
+// Encoder turns text into a sparse vector. EncodeDoc weights a stored document;
+// Encode weights a query. They differ only for corpus-aware encoders (BM25),
+// where the document side carries the length-saturated term frequencies and the
+// query side carries the inverse document frequencies.
 type Encoder interface {
+	EncodeDoc(text string) Vector
 	Encode(text string) Vector
 	Name() string
 }
 
+// Fitter derives an Encoder from the document corpus. Stateless encoders ignore
+// the corpus and return themselves; BM25 computes document frequencies and the
+// average document length (and persists them so the query side can match).
+type Fitter interface {
+	Fit(docs []string) (Encoder, error)
+	Name() string
+}
+
 // Lexical is a stateless term-frequency encoder with sublinear TF weighting and
-// L2 normalization. Stopwords are dropped to reduce noise.
+// L2 normalization. Stopwords are dropped to reduce noise. Its document and
+// query sides are identical, and Fit is a no-op (it needs no corpus statistics).
 type Lexical struct{}
 
 func (Lexical) Name() string { return "lexical-tf" }
+
+// Fit returns the encoder unchanged: Lexical uses no corpus statistics.
+func (l Lexical) Fit(_ []string) (Encoder, error) { return l, nil }
+
+// EncodeDoc is identical to Encode for Lexical (no document/query asymmetry).
+func (l Lexical) EncodeDoc(text string) Vector { return l.Encode(text) }
 
 func (Lexical) Encode(text string) Vector {
 	counts := make(map[uint32]float32)
