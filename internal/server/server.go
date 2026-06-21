@@ -12,6 +12,7 @@ import (
 	"github.com/vanducvt0305/zeus/internal/proxy"
 	"github.com/vanducvt0305/zeus/internal/search"
 	"github.com/vanducvt0305/zeus/internal/store"
+	"github.com/vanducvt0305/zeus/internal/usage"
 )
 
 // New builds the MCP discovery server, registering its tools. When prx is
@@ -190,12 +191,28 @@ func (s *service) callMCP(ctx context.Context, _ *mcp.CallToolRequest, in CallIn
 	}
 	res, err := s.proxy.Call(ctx, *m, in.Tool, in.Arguments)
 	// Flywheel: every call is an implicit signal — the agent selected this MCP,
-	// and the call either worked or didn't. Feed that back into ranking.
+	// and it was either unreachable, served-but-errored (usually the caller's
+	// args), or a clean success. Attribute them differently so the prior tracks
+	// the server's serviceability, not the agent's mistakes.
 	if s.svc.Usage != nil {
-		s.svc.Usage.Record(in.MCPID, err == nil && !res.IsError)
+		s.svc.Usage.Record(in.MCPID, callOutcome(res, err))
 	}
 	if err != nil {
 		return nil, CallOutput{}, err
 	}
 	return nil, CallOutput{Found: true, Content: res.Content, Structured: res.Structured, IsError: res.IsError}, nil
+}
+
+// callOutcome classifies a forwarded call for the flywheel: a transport/connect
+// failure is the server's fault (unreachable), a tool-level error is usually the
+// caller's (partial credit), and otherwise it's a clean success.
+func callOutcome(res proxy.Result, err error) usage.Outcome {
+	switch {
+	case err != nil:
+		return usage.OutcomeUnreachable
+	case res.IsError:
+		return usage.OutcomeToolError
+	default:
+		return usage.OutcomeSuccess
+	}
 }

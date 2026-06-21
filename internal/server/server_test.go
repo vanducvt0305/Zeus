@@ -2,11 +2,14 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/vanducvt0305/zeus/internal/model"
+	"github.com/vanducvt0305/zeus/internal/proxy"
 	"github.com/vanducvt0305/zeus/internal/search"
 	"github.com/vanducvt0305/zeus/internal/store"
+	"github.com/vanducvt0305/zeus/internal/usage"
 )
 
 func newTestService(hits []store.Hit) *service {
@@ -54,6 +57,25 @@ func TestSearchMCPRejectsEmptyQuery(t *testing.T) {
 	s := newTestService(nil)
 	if _, _, err := s.searchMCP(context.Background(), nil, SearchInput{}); err == nil {
 		t.Fatal("expected error for empty query")
+	}
+}
+
+func TestCallOutcomeClassification(t *testing.T) {
+	cases := []struct {
+		name string
+		res  proxy.Result
+		err  error
+		want usage.Outcome
+	}{
+		{"unreachable", proxy.Result{}, errors.New("connect: refused"), usage.OutcomeUnreachable},
+		{"tool error is the caller's fault", proxy.Result{IsError: true}, nil, usage.OutcomeToolError},
+		{"clean success", proxy.Result{Content: "ok"}, nil, usage.OutcomeSuccess},
+		{"error wins over is_error", proxy.Result{IsError: true}, errors.New("boom"), usage.OutcomeUnreachable},
+	}
+	for _, c := range cases {
+		if got := callOutcome(c.res, c.err); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 

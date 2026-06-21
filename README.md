@@ -413,11 +413,22 @@ call_mcp({ "mcp_id": "io.github.acme/search", "tool": "web_search",
 ## Usage flywheel
 
 Every `call_mcp` is an implicit signal: the agent *selected* that MCP, and the
-call either *worked or didn't*. The server records this (`internal/usage`) and
-blends a usage prior into ranking (`USAGE_WEIGHT`), so MCPs that agents actually
-use successfully rise over time — a quality signal competitors can't copy
-because it requires real traffic. Tallies persist to `USAGE_PATH` and are
-exposed at `/stats` when hosted.
+call had an outcome. The server records this (`internal/usage`) and blends a
+usage prior into ranking (`USAGE_WEIGHT`), so MCPs that agents actually use
+successfully rise over time — a quality signal competitors can't copy because it
+requires real traffic. Tallies persist to `USAGE_PATH` and are exposed at
+`/stats` when hosted.
+
+The outcome is attributed with care, because the three cases are not equally the
+server's fault:
+
+- **Unreachable** (couldn't connect / no remote endpoint / timeout) — a real
+  serviceability defect; counts fully against the server.
+- **Tool error** (the server ran the tool but it returned an error) — usually
+  the *caller's* bad arguments, not the server's defect, so it earns **partial
+  credit** rather than counting as a failure. Penalizing a working server for the
+  agent's mistakes would just add noise to the prior.
+- **Success** — full credit.
 
 ```
 final = (1 - covW - trustW - usageW)*relevance
