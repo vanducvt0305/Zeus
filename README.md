@@ -303,6 +303,19 @@ gate on it with `min_score`.
 Sparse vectors are always stored, so `HYBRID` and `RERANKER` can be changed at
 query time without re-indexing. Tune the shortlist size with `RERANK_POOL`.
 
+The sparse encoder itself is selectable with `SPARSE`. The default `tf` is
+stateless term-frequency (no corpus state, nothing to coordinate). `bm25` is the
+corpus-aware upgrade: it weights rare terms higher (IDF) and saturates repeated
+terms and long documents, so generic boilerplate ("an MCP server for …") stops
+drowning out the distinctive words. BM25 needs document-frequency statistics, so
+the indexer computes them once and writes them to `SPARSE_STATS_PATH`; the server
+reads the same file to weight queries (the IDF lives on the query side, so the
+dot product Qdrant computes reconstructs the BM25 score). The split keeps a clean
+fallback: if the server can't find the stats it logs and reverts to `tf`.
+Switching `SPARSE` requires re-indexing, since the stored document vectors carry
+the document-side weighting. On the small, well-named eval fixtures BM25 and TF
+score the same — its payoff shows on large, repetitive real-world catalogs.
+
 ## Evaluation
 
 You can't improve what you don't measure. `cmd/eval` runs a golden set of
@@ -470,8 +483,9 @@ Natural next steps:
   OAuth flow for servers that require interactive authorization.
 - **Model-based cross-encoder.** The `Reranker` interface already supports it;
   add a hosted cross-encoder (e.g. a BGE reranker behind an HTTP endpoint).
-- **IDF-weighted sparse.** The sparse encoder is stateless TF; persist corpus
-  document-frequencies to upgrade it to BM25.
+- **Corpus-statistics for BM25 at scale.** BM25 (`SPARSE=bm25`) recomputes
+  document frequencies on every full index pass; a streaming/incremental indexer
+  would need to maintain them online instead.
 - **Explicit feedback.** The flywheel already learns from call outcomes; add a
   tool for hosts to report end-task success for an even stronger signal.
 

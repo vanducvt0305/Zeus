@@ -30,7 +30,7 @@ type Indexer struct {
 	Enricher  enrich.Enricher
 	Trust     trust.Scorer
 	Embedder  embed.Embedder
-	Sparse    sparse.Encoder
+	Sparse    sparse.Fitter
 	Store     store.Store
 
 	// BatchSize bounds how many texts are embedded per request.
@@ -46,9 +46,9 @@ type Indexer struct {
 }
 
 // New builds an Indexer with sensible defaults. Nil stages default to no-ops: a
-// nil extractor/enricher skips that stage; a nil sparse encoder means
-// dense-only points.
-func New(src source.Source, ext extract.Extractor, enr enrich.Enricher, emb embed.Embedder, sp sparse.Encoder, st store.Store) *Indexer {
+// nil extractor/enricher skips that stage; a nil sparse fitter means dense-only
+// points.
+func New(src source.Source, ext extract.Extractor, enr enrich.Enricher, emb embed.Embedder, sp sparse.Fitter, st store.Store) *Indexer {
 	if ext == nil {
 		ext = extract.Noop{}
 	}
@@ -107,6 +107,26 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 
 	queue := buildRecords(mcps)
 
+	// Fit the sparse encoder over the whole corpus before encoding any document.
+	// For plain TF this is a no-op; for BM25 it computes document frequencies and
+	// the average document length (and persists them so the server's query side
+	// applies matching IDF weights). On failure we fall back to dense-only points
+	// rather than storing inconsistent sparse vectors.
+	var sparseEnc sparse.Encoder
+	if ix.Sparse != nil {
+		texts := make([]string, len(queue))
+		for i, p := range queue {
+			texts[i] = p.text
+		}
+		enc, err := ix.Sparse.Fit(texts)
+		if err != nil {
+			log.Printf("warning: sparse fit (%s) failed: %v; indexing dense-only", ix.Sparse.Name(), err)
+		} else {
+			sparseEnc = enc
+			log.Printf("sparse encoder %q fitted over %d documents", enc.Name(), len(texts))
+		}
+	}
+
 	indexed := 0
 	for start := 0; start < len(queue); start += ix.BatchSize {
 		end := min(start+ix.BatchSize, len(queue))
@@ -125,8 +145,8 @@ func (ix *Indexer) Run(ctx context.Context, limit int) (int, error) {
 		for i := range batch {
 			records[i] = batch[i].rec
 			records[i].Vector = vectors[i]
-			if ix.Sparse != nil {
-				records[i].Sparse = ix.Sparse.Encode(batch[i].text)
+			if sparseEnc != nil {
+				records[i].Sparse = sparseEnc.EncodeDoc(batch[i].text)
 			}
 		}
 		if err := ix.Store.Upsert(ctx, records); err != nil {

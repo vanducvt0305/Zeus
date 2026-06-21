@@ -72,7 +72,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("trust scorer: %v", err)
 		}
-		ix := index.New(source.NewFile(*fixtures), ext, enr, svc.Embedder, cfg.NewSparseEncoder(), svc.Store)
+		ix := index.New(source.NewFile(*fixtures), ext, enr, svc.Embedder, cfg.NewSparseFitter(), svc.Store)
 		ix.Trust = tr
 		ix.Concurrency = cfg.IndexConcurrency
 		log.Printf("indexing fixtures (enricher=%s, embedder=%s, collection=%s)...", enr.Name(), svc.Embedder.Name(), cfg.QdrantCollection)

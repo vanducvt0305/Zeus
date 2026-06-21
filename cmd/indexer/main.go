@@ -60,7 +60,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("trust scorer: %v", err)
 	}
-	ix := index.New(src, ext, enr, emb, cfg.NewSparseEncoder(), st)
+	ix := index.New(src, ext, enr, emb, cfg.NewSparseFitter(), st)
 	ix.ExtractConcurrency = cfg.ExtractConcurrency
 	ix.Concurrency = cfg.IndexConcurrency
 	ix.Prune = cfg.IndexPrune

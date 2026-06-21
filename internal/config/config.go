@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -64,6 +65,19 @@ type Config struct {
 
 	// Hybrid enables sparse (keyword) retrieval fused with dense at query time.
 	Hybrid bool
+
+	// Sparse encoder: "tf" (default, stateless) or "bm25" (corpus-aware IDF +
+	// length normalization; stronger on large/boilerplate-heavy catalogs).
+	// Switching modes requires re-indexing, since the stored document vectors
+	// carry the document-side weighting.
+	Sparse string
+	// SparseStatsPath is where BM25 corpus stats are persisted by the indexer and
+	// loaded by the server. Indexer and server must point at the same file.
+	SparseStatsPath string
+	// BM25K1/BM25B are the BM25 term-frequency saturation and length-normalization
+	// hyperparameters.
+	BM25K1 float64
+	BM25B  float64
 
 	// Reranker selection: "lexical" (offline default), "llm", or "none".
 	Reranker string
@@ -131,9 +145,13 @@ func Load() Config {
 		LLMAPIKey:   env("LLM_API_KEY", ""),
 		LLMModel:    env("LLM_MODEL", "claude-haiku-4-5"),
 
-		Hybrid:     envBool("HYBRID", true),
-		Reranker:   env("RERANKER", "lexical"),
-		RerankPool: envInt("RERANK_POOL", 30),
+		Hybrid:          envBool("HYBRID", true),
+		Sparse:          env("SPARSE", "tf"),
+		SparseStatsPath: env("SPARSE_STATS_PATH", "sparse_stats.json"),
+		BM25K1:          envFloat("BM25_K1", sparse.DefaultK1),
+		BM25B:           envFloat("BM25_B", sparse.DefaultB),
+		Reranker:        env("RERANKER", "lexical"),
+		RerankPool:      envInt("RERANK_POOL", 30),
 
 		Trust:          env("TRUST", "heuristic"),
 		TrustWeight:    envFloat("TRUST_WEIGHT", 0.15),
@@ -194,9 +212,31 @@ func (c Config) newSingleSource(name string) (source.Source, error) {
 	}
 }
 
-// NewSparseEncoder builds the sparse (keyword) encoder used for hybrid search.
+// NewSparseEncoder builds the query-side sparse (keyword) encoder used for
+// hybrid search. For "bm25" it loads the corpus stats the indexer persisted so
+// queries get matching IDF weights; if those stats are missing (e.g. the server
+// runs without the indexer's stats file) it logs and falls back to stateless TF
+// rather than silently mis-weighting queries against BM25 documents.
 func (c Config) NewSparseEncoder() sparse.Encoder {
-	return sparse.Lexical{}
+	if strings.ToLower(c.Sparse) != "bm25" {
+		return sparse.Lexical{}
+	}
+	stats, err := sparse.LoadStats(c.SparseStatsPath)
+	if err != nil {
+		log.Printf("sparse: bm25 requested but stats %q unavailable (%v); falling back to tf", c.SparseStatsPath, err)
+		return sparse.Lexical{}
+	}
+	return sparse.NewBM25(stats, c.BM25K1, c.BM25B)
+}
+
+// NewSparseFitter builds the index-time sparse fitter. For "bm25" it returns a
+// builder that computes and persists corpus stats during indexing; otherwise it
+// returns the stateless TF encoder (which fits to itself).
+func (c Config) NewSparseFitter() sparse.Fitter {
+	if strings.ToLower(c.Sparse) != "bm25" {
+		return sparse.Lexical{}
+	}
+	return sparse.BM25Builder{K1: c.BM25K1, B: c.BM25B, Path: c.SparseStatsPath}
 }
 
 // NewTrustScorer builds the configured index-time trust scorer.
