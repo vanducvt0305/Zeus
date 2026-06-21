@@ -58,6 +58,13 @@ func (e *LLM) Rerank(ctx context.Context, query string, hits []store.Hit) ([]sto
 			out = append(out, h)
 		}
 	}
+	// The model returns only an order, not scores; attach a smooth, monotonic
+	// relevance by position so the downstream blend follows the LLM's ranking
+	// (and the first-stage scores, which are not comparable here, don't fight it).
+	n := float32(len(out))
+	for i := range out {
+		out[i].Score = (n - float32(i)) / n
+	}
 	return out, nil
 }
 

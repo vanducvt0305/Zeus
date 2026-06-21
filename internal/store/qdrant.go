@@ -210,8 +210,11 @@ func (q *Qdrant) Search(ctx context.Context, sq SearchQuery) ([]Hit, error) {
 		return nil, fmt.Errorf("querying: %w", err)
 	}
 
-	// Collapse candidate points to one best entry per MCP.
+	// Collapse candidate points to one best entry per MCP, while counting how
+	// many of each MCP's representations (server/tool/query points) surfaced —
+	// matching on several points is a stronger signal than a single lucky match.
 	best := make(map[string]candidate)
+	counts := make(map[string]int)
 	for _, p := range points {
 		c := candidate{
 			mcpID:     payloadString(p.Payload, fieldMCPID),
@@ -222,6 +225,7 @@ func (q *Qdrant) Search(ctx context.Context, sq SearchQuery) ([]Hit, error) {
 		if c.mcpID == "" {
 			continue
 		}
+		counts[c.mcpID]++
 		if cur, seen := best[c.mcpID]; !seen || c.score > cur.score {
 			best[c.mcpID] = c
 		}
@@ -255,7 +259,7 @@ func (q *Qdrant) Search(ctx context.Context, sq SearchQuery) ([]Hit, error) {
 		if !ok {
 			continue
 		}
-		hits = append(hits, Hit{MCP: m, Score: c.score, MatchKind: c.matchKind, ToolName: c.toolName})
+		hits = append(hits, Hit{MCP: m, Score: c.score, MatchKind: c.matchKind, ToolName: c.toolName, MatchCount: counts[c.mcpID]})
 	}
 	return hits, nil
 }

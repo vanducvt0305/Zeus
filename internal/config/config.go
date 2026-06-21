@@ -76,6 +76,9 @@ type Config struct {
 	// TrustWeight (search-time) is how much the stored trust prior influences
 	// final ranking, 0..1. 0 disables the blend.
 	TrustWeight float64
+	// CoverageWeight (search-time) is how much matching on several of an MCP's
+	// representations (tools/synthetic queries) boosts it, 0..1. 0 disables it.
+	CoverageWeight float64
 
 	// Proxy: the server's call_mcp tool forwards calls to discovered MCPs.
 	ProxyEnabled bool
@@ -132,8 +135,9 @@ func Load() Config {
 		Reranker:   env("RERANKER", "lexical"),
 		RerankPool: envInt("RERANK_POOL", 30),
 
-		Trust:       env("TRUST", "heuristic"),
-		TrustWeight: envFloat("TRUST_WEIGHT", 0.15),
+		Trust:          env("TRUST", "heuristic"),
+		TrustWeight:    envFloat("TRUST_WEIGHT", 0.15),
+		CoverageWeight: envFloat("COVERAGE_WEIGHT", 0.05),
 
 		ProxyEnabled: envBool("PROXY_ENABLED", true),
 		ProxyTimeout: envInt("PROXY_TIMEOUT", 30),
@@ -329,10 +333,11 @@ func (c Config) NewSearchService() (*search.Service, error) {
 		Sparse:      c.NewSparseEncoder(),
 		Store:       st,
 		Reranker:    rr,
-		Hybrid:      c.Hybrid,
-		Pool:        c.RerankPool,
-		TrustWeight: c.TrustWeight,
-		UsageWeight: c.UsageWeight,
+		Hybrid:         c.Hybrid,
+		Pool:           c.RerankPool,
+		TrustWeight:    c.TrustWeight,
+		UsageWeight:    c.UsageWeight,
+		CoverageWeight: c.CoverageWeight,
 	}, nil
 }
 

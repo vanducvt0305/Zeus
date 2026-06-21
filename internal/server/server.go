@@ -26,7 +26,10 @@ func New(name, version string, svc *search.Service, prx *proxy.Proxy) *mcp.Serve
 		Description: "Find MCP servers that can perform a described task. " +
 			"Describe the capability you need in natural language (e.g. " +
 			"\"search product data\", \"send email\", \"query a Postgres database\") " +
-			"and get back the most relevant MCP servers, ranked by semantic similarity.",
+			"and get back the most relevant MCP servers, ranked by semantic similarity. " +
+			"Each result has a 'confidence' (0..1) measuring how strongly it matches the " +
+			"query on its own; use 'min_score' to drop weak matches so you can tell a " +
+			"strong hit from the best of a poor field.",
 	}, s.searchMCP)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -63,6 +66,7 @@ type SearchInput struct {
 	TopK       int      `json:"top_k,omitempty" jsonschema:"maximum number of MCP servers to return (default 5)"`
 	Categories []string `json:"categories,omitempty" jsonschema:"optional category filter; results match at least one of these"`
 	Source     string   `json:"source,omitempty" jsonschema:"optional source filter, e.g. \"registry\""`
+	MinScore   float64  `json:"min_score,omitempty" jsonschema:"optional confidence cutoff 0..1; results below it are dropped (default 0, no cutoff)"`
 }
 
 type SearchResult struct {
@@ -71,6 +75,7 @@ type SearchResult struct {
 	Title       string   `json:"title,omitempty"`
 	Description string   `json:"description"`
 	Score       float32  `json:"score"`
+	Confidence  float32  `json:"confidence"`
 	MatchedTool string   `json:"matched_tool,omitempty"`
 	Categories  []string `json:"categories,omitempty"`
 	Repository  string   `json:"repository,omitempty"`
@@ -90,7 +95,7 @@ func (s *service) searchMCP(ctx context.Context, _ *mcp.CallToolRequest, in Sear
 		topK = 5
 	}
 
-	hits, err := s.svc.Search(ctx, in.Query, topK, store.Filter{
+	hits, err := s.svc.Search(ctx, in.Query, topK, in.MinScore, store.Filter{
 		Categories: in.Categories,
 		Source:     in.Source,
 	})
@@ -106,6 +111,7 @@ func (s *service) searchMCP(ctx context.Context, _ *mcp.CallToolRequest, in Sear
 			Title:       h.MCP.Title,
 			Description: h.MCP.Description,
 			Score:       h.Score,
+			Confidence:  h.Confidence,
 			MatchedTool: h.ToolName,
 			Categories:  h.MCP.AllCategories(),
 			Repository:  h.MCP.Repository,

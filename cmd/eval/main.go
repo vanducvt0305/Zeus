@@ -88,7 +88,7 @@ func main() {
 
 	// Ranking goes through the exact pipeline the server uses.
 	rank := func(ctx context.Context, query string, topK int) ([]string, error) {
-		hits, err := svc.Search(ctx, query, topK, store.Filter{})
+		hits, err := svc.Search(ctx, query, topK, 0, store.Filter{})
 		if err != nil {
 			return nil, err
 		}

@@ -34,10 +34,17 @@ type Service struct {
 	// UsageWeight (0..1) blends the learned usage prior (the flywheel) into
 	// ranking, so MCPs agents actually use successfully rise over time.
 	UsageWeight float64
+	// CoverageWeight (0..1) rewards an MCP that matched on several of its
+	// representations (multiple tools / synthetic queries) over one that matched
+	// on a single point — a stronger relevance signal the rank-collapse discards.
+	CoverageWeight float64
 }
 
-// Search returns up to topK MCPs for the query.
-func (s *Service) Search(ctx context.Context, query string, topK int, filter store.Filter) ([]store.Hit, error) {
+// Search returns up to topK MCPs for the query. Results whose Confidence is
+// below minConfidence (0..1) are dropped, so an agent can ask for "only strong
+// matches" instead of always receiving topK best-of-whatever-exists; pass 0 to
+// disable the cutoff.
+func (s *Service) Search(ctx context.Context, query string, topK int, minConfidence float64, filter store.Filter) ([]store.Hit, error) {
 	if topK <= 0 {
 		topK = 5
 	}
@@ -72,41 +79,60 @@ func (s *Service) Search(ctx context.Context, query string, topK int, filter sto
 
 	hits = s.finalize(hits)
 
+	if minConfidence > 0 {
+		kept := hits[:0]
+		for _, h := range hits {
+			if float64(h.Confidence) >= minConfidence {
+				kept = append(kept, h)
+			}
+		}
+		hits = kept
+	}
+
 	if len(hits) > topK {
 		hits = hits[:topK]
 	}
 	return hits, nil
 }
 
-// finalize computes each result's final score and orders by it, blending
-// rank-based relevance (1 at the top, decaying down the post-rerank list) with
-// the static trust prior and the learned usage prior:
+// finalize computes each result's final score and orders by it. It blends the
+// post-rerank relevance with the coverage, trust and usage priors:
 //
-//	final = (1 - wT - wU)*relevance + wT*trust + wU*usage
+//	final = wR*relevance + wC*coverage + wT*trust + wU*usage   (wR = 1-wC-wT-wU)
 //
-// It always runs so the returned Score reflects the actual final ranking — not
-// the first-stage retrieval score, which would look inconsistent with the order
-// after reranking. Modest weights only reorder among comparably-relevant
-// results rather than overriding relevance.
+// relevance is the reranker's own score (query-term coverage / LLM order),
+// min-max normalized across the pool so the gap between a strong top match and a
+// weak tail is preserved — unlike a pure rank decay, where every step looks
+// equal and a modest trust weight can leapfrog a clearly better match. When the
+// scores are degenerate (all equal, e.g. before any reranker has run) it falls
+// back to the rank decay so trust still breaks ties among equally-relevant hits.
+//
+// It also records each hit's absolute Confidence (the pre-blend relevance) so an
+// agent can tell a strong match from the best of a weak field, and always
+// overwrites Score with the final blended value so the returned ordering and
+// score agree.
 func (s *Service) finalize(hits []store.Hit) []store.Hit {
 	if len(hits) == 0 {
 		return hits
 	}
-	wT, wU := clampWeights(s.TrustWeight, s.UsageWeight)
-	wR := 1 - wT - wU
-	n := float64(len(hits))
+	wT, wU, wC := clampWeights(s.TrustWeight, s.UsageWeight, s.CoverageWeight)
+	wR := 1 - wT - wU - wC
+
+	rel := relevanceScores(hits)
+
 	type scored struct {
 		hit   store.Hit
 		final float64
 	}
 	ranked := make([]scored, len(hits))
 	for i, h := range hits {
-		relevance := 1 - float64(i)/n
 		var u float64
 		if s.Usage != nil {
 			u = s.Usage.Score(h.MCP.ID)
 		}
-		ranked[i] = scored{hit: h, final: wR*relevance + wT*h.MCP.Trust + wU*u}
+		h.Confidence = clamp01f(h.Score) // absolute, pre-blend relevance
+		final := wR*rel[i] + wC*coverage(h.MatchCount) + wT*clamp01(h.MCP.Trust) + wU*u
+		ranked[i] = scored{hit: h, final: final}
 	}
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].final > ranked[j].final })
 	out := make([]store.Hit, len(ranked))
@@ -117,18 +143,74 @@ func (s *Service) finalize(hits []store.Hit) []store.Hit {
 	return out
 }
 
+// relevanceScores turns the post-rerank Score of each hit into a 0..1 relevance,
+// min-max normalized across the pool. If every score is equal (degenerate), it
+// falls back to a rank-based decay (1 at the top) so trust/usage can still break
+// ties among hits the retriever considered equally relevant.
+func relevanceScores(hits []store.Hit) []float64 {
+	n := len(hits)
+	out := make([]float64, n)
+	minS, maxS := float64(hits[0].Score), float64(hits[0].Score)
+	for _, h := range hits {
+		v := float64(h.Score)
+		if v < minS {
+			minS = v
+		}
+		if v > maxS {
+			maxS = v
+		}
+	}
+	if maxS > minS {
+		span := maxS - minS
+		for i, h := range hits {
+			out[i] = (float64(h.Score) - minS) / span
+		}
+		return out
+	}
+	for i := range hits {
+		out[i] = 1 - float64(i)/float64(n)
+	}
+	return out
+}
+
+// coverage maps the number of matched representations to a saturating 0..1
+// bonus: a single match earns nothing (the baseline), and extra matches help
+// with diminishing returns (2→0.5, 3→0.67, 4→0.75, …).
+func coverage(matchCount int) float64 {
+	if matchCount <= 1 {
+		return 0
+	}
+	return 1 - 1/float64(matchCount)
+}
+
 // clampWeights keeps each weight in [0,1] and their sum <= 1 (so relevance keeps
 // a non-negative share), scaling them down proportionally if they exceed 1.
-func clampWeights(wT, wU float64) (float64, float64) {
-	if wT < 0 {
-		wT = 0
-	}
-	if wU < 0 {
-		wU = 0
-	}
-	if sum := wT + wU; sum > 1 {
+func clampWeights(wT, wU, wC float64) (float64, float64, float64) {
+	wT, wU, wC = clamp01(wT), clamp01(wU), clamp01(wC)
+	if sum := wT + wU + wC; sum > 1 {
 		wT /= sum
 		wU /= sum
+		wC /= sum
 	}
-	return wT, wU
+	return wT, wU, wC
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func clamp01f(v float32) float32 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }

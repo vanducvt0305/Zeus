@@ -285,10 +285,20 @@ At query time (`internal/search`):
    combines by rank, so the two score scales need not be comparable.
 3. **Rerank** the pool — the `lexical` reranker scores query-term coverage over
    each candidate's full capability text; the `llm` reranker asks a model to
-   order the shortlist.
-4. **Blend trust** — nudge the order by each result's stored trust prior
-   (see above).
-5. **Truncate** to `top_k`.
+   order the shortlist. The reranker's own score becomes the result's relevance.
+4. **Blend** — combine the post-rerank relevance with three priors:
+   **coverage** (`COVERAGE_WEIGHT`, rewards matching on several of an MCP's
+   tools/synthetic queries over a single lucky point), **trust**
+   (`TRUST_WEIGHT`) and **usage** (`USAGE_WEIGHT`). Relevance is min-max
+   normalized across the pool, so the gap between a strong top match and a weak
+   tail is preserved — a modest prior weight only reorders among
+   comparably-relevant results instead of leapfrogging a clearly better match.
+5. **Truncate** to `top_k`, after dropping any result below the request's
+   `min_score` confidence cutoff (if set).
+
+Each result also carries a **`confidence`** (0..1): the absolute, pre-blend
+relevance, so an agent can tell a strong match from the best of a weak field and
+gate on it with `min_score`.
 
 Sparse vectors are always stored, so `HYBRID` and `RERANKER` can be changed at
 query time without re-indexing. Tune the shortlist size with `RERANK_POOL`.
@@ -314,7 +324,13 @@ stage added on top of the previous:
 |---|---|---|---|---|
 | dense-only, no rerank | 0.739 | 0.913 | 0.812 | 0.837 |
 | + hybrid (dense+sparse, RRF) | 0.870 | **1.000** | 0.920 | 0.940 |
-| + lexical rerank | **0.913** | **1.000** | **0.949** | **0.962** |
+| + lexical rerank | 0.913 | **1.000** | 0.949 | 0.962 |
+| + coverage blend | **0.957** | **1.000** | **0.978** | **0.984** |
+
+> The last two rows are an A/B on the *same* index (coverage blend off vs on);
+> the coverage prior is the contribution. Absolute numbers wobble ±0.04 between
+> index builds because Qdrant's HNSW graph is non-deterministic — query-time
+> ranking on any given index is exact and reproducible.
 
 Hybrid retrieval finds the right MCP in the top-5 for every query and lifts
 precision-at-1 sharply (exact tool-name matches that the lexical embedder's
@@ -391,7 +407,8 @@ because it requires real traffic. Tallies persist to `USAGE_PATH` and are
 exposed at `/stats` when hosted.
 
 ```
-final = (1 - trustW - usageW)*relevance + trustW*trust + usageW*usage
+final = (1 - covW - trustW - usageW)*relevance
+        + covW*coverage + trustW*trust + usageW*usage
 ```
 
 This is `v1` (implicit signal from call outcomes); explicit task-success
