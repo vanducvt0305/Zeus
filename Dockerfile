@@ -13,5 +13,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server 
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/server /server
-# stdio transport: keep stdin/stdout clean for the MCP client.
+# Default stdio; set TRANSPORT=http to run as a hosted gateway on this port.
+EXPOSE 8080
 ENTRYPOINT ["/server"]

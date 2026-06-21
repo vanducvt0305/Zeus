@@ -380,6 +380,23 @@ call_mcp({ "mcp_id": "io.github.acme/search", "tool": "web_search",
 - Uses the same SSRF-guarded, credential-aware connection path as extraction.
 - Disable with `PROXY_ENABLED=false` (then the tool isn't registered).
 
+## Host it as a remote gateway
+
+By default the server speaks MCP over **stdio** (the host launches the binary).
+Set `TRANSPORT=http` to run it as a **hosted remote gateway** — agents then point
+at a URL with zero install, and one connection gives them discovery
+(`search_mcp`) plus routing (`call_mcp`) over the whole ecosystem.
+
+```bash
+TRANSPORT=http HTTP_ADDR=:8080 ./bin/server   # MCP at /, health at /healthz
+```
+
+Client config for a hosted instance:
+
+```json
+{ "mcpServers": { "zeus": { "url": "https://your-host.example/" } } }
+```
+
 ## Configuration
 
 All settings come from the environment; see [`.env.example`](./.env.example).

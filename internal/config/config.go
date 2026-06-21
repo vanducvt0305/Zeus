@@ -80,6 +80,10 @@ type Config struct {
 	ProxyEnabled bool
 	ProxyTimeout int // seconds, per connect+call
 
+	// Server transport: "stdio" (default) or "http" (hosted gateway).
+	Transport string
+	HTTPAddr  string
+
 	// Source selection for the indexer: "registry" (default), "github", "file".
 	Source        string
 	RegistryURL   string
@@ -128,6 +132,9 @@ func Load() Config {
 
 		ProxyEnabled: envBool("PROXY_ENABLED", true),
 		ProxyTimeout: envInt("PROXY_TIMEOUT", 30),
+
+		Transport: env("TRANSPORT", "stdio"),
+		HTTPAddr:  env("HTTP_ADDR", ":8080"),
 
 		Source:        env("SOURCE", "registry"),
 		RegistryURL:   env("REGISTRY_URL", ""),
