@@ -37,7 +37,7 @@ agent can call to discover capabilities at runtime. Think of it as
 │    • call_mcp(mcp_id, tool, args)  ← router   │
 │  query pipeline:                              │
 │    embed → hybrid retrieve (dense+sparse,RRF) │
-│         → rerank → trust-blend → top-k        │
+│         → rerank → trust+usage blend → top-k  │
 └─────────────────────────────────────────────┘
 ```
 
@@ -84,6 +84,7 @@ internal/
   rerank/      Reranker interface + lexical (offline) + LLM reranker
   search/      query pipeline: embed → hybrid retrieve → rerank → top-k
   proxy/       router: forward a tool call to a discovered MCP (call_mcp)
+  usage/       flywheel: record call outcomes, feed a usage prior into ranking
   index/       indexer: sources → resolve → extract → enrich → trust → embed → store
   server/      the three MCP tools
   eval/        IR metrics (Hit@1, Recall@k, MRR, nDCG@k) + runner
@@ -380,6 +381,22 @@ call_mcp({ "mcp_id": "io.github.acme/search", "tool": "web_search",
 - Uses the same SSRF-guarded, credential-aware connection path as extraction.
 - Disable with `PROXY_ENABLED=false` (then the tool isn't registered).
 
+## Usage flywheel
+
+Every `call_mcp` is an implicit signal: the agent *selected* that MCP, and the
+call either *worked or didn't*. The server records this (`internal/usage`) and
+blends a usage prior into ranking (`USAGE_WEIGHT`), so MCPs that agents actually
+use successfully rise over time — a quality signal competitors can't copy
+because it requires real traffic. Tallies persist to `USAGE_PATH` and are
+exposed at `/stats` when hosted.
+
+```
+final = (1 - trustW - usageW)*relevance + trustW*trust + usageW*usage
+```
+
+This is `v1` (implicit signal from call outcomes); explicit task-success
+feedback is a natural extension.
+
 ## Host it as a remote gateway
 
 By default the server speaks MCP over **stdio** (the host launches the binary).
@@ -412,8 +429,9 @@ cards with synthetic queries)**, **trust/quality scoring (heuristic + LLM)
 blended into ranking**, multi-representation indexing
 (server/tool/query), **hybrid retrieval (dense + sparse, RRF) with lexical/LLM
 reranking**, Qdrant store, the discovery tools **plus a `call_mcp` router**
-that forwards calls to discovered servers, hash + OpenAI-compatible embedders,
-and an **evaluation harness** with a golden set and ablation.
+that forwards calls to discovered servers, **stdio + hosted HTTP transports**,
+a **usage flywheel** (call outcomes feed back into ranking), hash +
+OpenAI-compatible embedders, and an **evaluation harness** with ablation.
 
 Hardened for scale/ops: the full record is stored once per MCP (not on every
 point) and search batch-fetches winners; payload field indexes; categories via
@@ -437,8 +455,8 @@ Natural next steps:
   add a hosted cross-encoder (e.g. a BGE reranker behind an HTTP endpoint).
 - **IDF-weighted sparse.** The sparse encoder is stateless TF; persist corpus
   document-frequencies to upgrade it to BM25.
-- **Online feedback loop.** Log which MCP an agent actually selected and whether
-  the task succeeded, and feed those labels back into ranking.
+- **Explicit feedback.** The flywheel already learns from call outcomes; add a
+  tool for hosts to report end-task success for an even stronger signal.
 
 ## Publishing & listing
 

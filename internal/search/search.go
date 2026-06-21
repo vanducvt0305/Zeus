@@ -13,23 +13,27 @@ import (
 	"github.com/vanducvt0305/zeus/internal/rerank"
 	"github.com/vanducvt0305/zeus/internal/sparse"
 	"github.com/vanducvt0305/zeus/internal/store"
+	"github.com/vanducvt0305/zeus/internal/usage"
 )
 
-// Service runs the retrieve → rerank → trust-blend pipeline.
+// Service runs the retrieve → rerank → trust/usage-blend pipeline.
 type Service struct {
 	Embedder embed.Embedder
 	Sparse   sparse.Encoder  // used only when Hybrid is true
 	Store    store.Store
 	Reranker rerank.Reranker // nil means no reranking
+	Usage    usage.Recorder  // nil means no usage signal
 
 	// Hybrid fuses sparse keyword retrieval with dense retrieval.
 	Hybrid bool
 	// Pool is the first-stage candidate count handed to the reranker before
 	// truncating to top-k.
 	Pool int
-	// TrustWeight (0..1) blends each result's stored trust prior into the final
-	// ranking, so better servers win among comparably-relevant ones. 0 disables.
+	// TrustWeight (0..1) blends each result's stored trust prior into ranking.
 	TrustWeight float64
+	// UsageWeight (0..1) blends the learned usage prior (the flywheel) into
+	// ranking, so MCPs agents actually use successfully rise over time.
+	UsageWeight float64
 }
 
 // Search returns up to topK MCPs for the query.
@@ -74,26 +78,22 @@ func (s *Service) Search(ctx context.Context, query string, topK int, filter sto
 	return hits, nil
 }
 
-// finalize computes each result's final score and orders by it. The score is
-// rank-based relevance (1 at the top, decaying down the post-rerank list)
-// blended with the trust prior:
+// finalize computes each result's final score and orders by it, blending
+// rank-based relevance (1 at the top, decaying down the post-rerank list) with
+// the static trust prior and the learned usage prior:
 //
-//	final = (1-w)*relevance + w*trust
+//	final = (1 - wT - wU)*relevance + wT*trust + wU*usage
 //
-// It always runs (even with w=0) so the returned Score reflects the actual
-// final ranking — not the first-stage retrieval score, which would otherwise
-// look inconsistent with the order after reranking. A modest w only reorders
-// among comparably-relevant results.
+// It always runs so the returned Score reflects the actual final ranking — not
+// the first-stage retrieval score, which would look inconsistent with the order
+// after reranking. Modest weights only reorder among comparably-relevant
+// results rather than overriding relevance.
 func (s *Service) finalize(hits []store.Hit) []store.Hit {
 	if len(hits) == 0 {
 		return hits
 	}
-	w := s.TrustWeight
-	if w < 0 {
-		w = 0
-	} else if w > 1 {
-		w = 1
-	}
+	wT, wU := clampWeights(s.TrustWeight, s.UsageWeight)
+	wR := 1 - wT - wU
 	n := float64(len(hits))
 	type scored struct {
 		hit   store.Hit
@@ -102,7 +102,11 @@ func (s *Service) finalize(hits []store.Hit) []store.Hit {
 	ranked := make([]scored, len(hits))
 	for i, h := range hits {
 		relevance := 1 - float64(i)/n
-		ranked[i] = scored{hit: h, final: (1-w)*relevance + w*h.MCP.Trust}
+		var u float64
+		if s.Usage != nil {
+			u = s.Usage.Score(h.MCP.ID)
+		}
+		ranked[i] = scored{hit: h, final: wR*relevance + wT*h.MCP.Trust + wU*u}
 	}
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].final > ranked[j].final })
 	out := make([]store.Hit, len(ranked))
@@ -111,4 +115,20 @@ func (s *Service) finalize(hits []store.Hit) []store.Hit {
 		out[i] = r.hit
 	}
 	return out
+}
+
+// clampWeights keeps each weight in [0,1] and their sum <= 1 (so relevance keeps
+// a non-negative share), scaling them down proportionally if they exceed 1.
+func clampWeights(wT, wU float64) (float64, float64) {
+	if wT < 0 {
+		wT = 0
+	}
+	if wU < 0 {
+		wU = 0
+	}
+	if sum := wT + wU; sum > 1 {
+		wT /= sum
+		wU /= sum
+	}
+	return wT, wU
 }

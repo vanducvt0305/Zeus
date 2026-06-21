@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/vanducvt0305/zeus/internal/config"
 	"github.com/vanducvt0305/zeus/internal/server"
+	"github.com/vanducvt0305/zeus/internal/usage"
 )
 
 func main() {
@@ -38,8 +40,14 @@ func main() {
 		log.Fatalf("proxy: %v", err)
 	}
 
+	// Flywheel: shared usage recorder feeds call_mcp outcomes back into ranking.
+	rec := cfg.NewUsageRecorder()
+	svc.Usage = rec
+	defer rec.Flush()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go autoFlush(ctx, rec, 30*time.Second)
 
 	newServer := func() *mcp.Server { return server.New("zeus-mcp-discovery", "0.1.0", svc, prx) }
 
@@ -52,7 +60,7 @@ func main() {
 			log.Fatalf("server stopped: %v", err)
 		}
 	case "http":
-		if err := runHTTP(ctx, cfg.HTTPAddr, newServer); err != nil {
+		if err := runHTTP(ctx, cfg.HTTPAddr, newServer, rec); err != nil {
 			log.Fatalf("server stopped: %v", err)
 		}
 	default:
@@ -60,15 +68,34 @@ func main() {
 	}
 }
 
-// runHTTP serves the MCP server over streamable HTTP, plus a /healthz endpoint,
-// with graceful shutdown.
-func runHTTP(ctx context.Context, addr string, newServer func() *mcp.Server) error {
+// autoFlush periodically persists usage tallies so a crash doesn't lose the
+// flywheel's learning.
+func autoFlush(ctx context.Context, rec interface{ Flush() error }, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			_ = rec.Flush()
+		}
+	}
+}
+
+// runHTTP serves the MCP server over streamable HTTP, plus /healthz and /stats
+// (the flywheel tallies), with graceful shutdown.
+func runHTTP(ctx context.Context, addr string, newServer func() *mcp.Server, rec interface{ Snapshot() map[string]usage.Stat }) error {
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return newServer() }, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/stats", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(rec.Snapshot())
 	})
 	mux.Handle("/", handler)
 

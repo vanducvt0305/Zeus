@@ -22,6 +22,7 @@ import (
 	"github.com/vanducvt0305/zeus/internal/sparse"
 	"github.com/vanducvt0305/zeus/internal/store"
 	"github.com/vanducvt0305/zeus/internal/trust"
+	"github.com/vanducvt0305/zeus/internal/usage"
 )
 
 // Config holds every tunable value, sourced from environment variables.
@@ -84,6 +85,10 @@ type Config struct {
 	Transport string
 	HTTPAddr  string
 
+	// Usage flywheel: record call_mcp outcomes and feed them into ranking.
+	UsagePath   string  // JSON file to persist tallies; empty = in-memory only
+	UsageWeight float64 // 0..1 ranking influence of the usage prior
+
 	// Source selection for the indexer: "registry" (default), "github", "file".
 	Source        string
 	RegistryURL   string
@@ -135,6 +140,9 @@ func Load() Config {
 
 		Transport: env("TRANSPORT", "stdio"),
 		HTTPAddr:  env("HTTP_ADDR", ":8080"),
+
+		UsagePath:   env("USAGE_PATH", ""),
+		UsageWeight: envFloat("USAGE_WEIGHT", 0.10),
 
 		Source:        env("SOURCE", "registry"),
 		RegistryURL:   env("REGISTRY_URL", ""),
@@ -324,7 +332,14 @@ func (c Config) NewSearchService() (*search.Service, error) {
 		Hybrid:      c.Hybrid,
 		Pool:        c.RerankPool,
 		TrustWeight: c.TrustWeight,
+		UsageWeight: c.UsageWeight,
 	}, nil
+}
+
+// NewUsageRecorder builds the flywheel recorder (in-memory, persisted to
+// UsagePath when set).
+func (c Config) NewUsageRecorder() *usage.Memory {
+	return usage.NewMemory(c.UsagePath)
 }
 
 func env(key, def string) string {

@@ -183,6 +183,11 @@ func (s *service) callMCP(ctx context.Context, _ *mcp.CallToolRequest, in CallIn
 		return nil, CallOutput{Found: false}, nil
 	}
 	res, err := s.proxy.Call(ctx, *m, in.Tool, in.Arguments)
+	// Flywheel: every call is an implicit signal — the agent selected this MCP,
+	// and the call either worked or didn't. Feed that back into ranking.
+	if s.svc.Usage != nil {
+		s.svc.Usage.Record(in.MCPID, err == nil && !res.IsError)
+	}
 	if err != nil {
 		return nil, CallOutput{}, err
 	}
