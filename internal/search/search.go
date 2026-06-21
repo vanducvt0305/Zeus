@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/vanducvt0305/zeus/internal/embed"
 	"github.com/vanducvt0305/zeus/internal/rerank"
@@ -38,6 +39,15 @@ type Service struct {
 	// representations (multiple tools / synthetic queries) over one that matched
 	// on a single point — a stronger relevance signal the rank-collapse discards.
 	CoverageWeight float64
+
+	// Cache memoizes finished results for repeated queries (nil = disabled).
+	Cache *resultCache
+}
+
+// EnableCache turns on (or off) the query-result cache. A ttl or max <= 0
+// disables it. Call once at construction.
+func (s *Service) EnableCache(ttl time.Duration, max int) {
+	s.Cache = newResultCache(ttl, max)
 }
 
 // Search returns up to topK MCPs for the query. Results whose Confidence is
@@ -48,6 +58,12 @@ func (s *Service) Search(ctx context.Context, query string, topK int, minConfide
 	if topK <= 0 {
 		topK = 5
 	}
+
+	key := cacheKey(query, topK, minConfidence, filter)
+	if hits, ok := s.Cache.get(key); ok {
+		return hits, nil
+	}
+
 	pool := s.Pool
 	if pool < topK {
 		pool = topK
@@ -92,6 +108,8 @@ func (s *Service) Search(ctx context.Context, query string, topK int, minConfide
 	if len(hits) > topK {
 		hits = hits[:topK]
 	}
+
+	s.Cache.put(key, hits)
 	return hits, nil
 }
 

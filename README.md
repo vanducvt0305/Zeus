@@ -302,6 +302,10 @@ gate on it with `min_score`.
 
 Sparse vectors are always stored, so `HYBRID` and `RERANKER` can be changed at
 query time without re-indexing. Tune the shortlist size with `RERANK_POOL`.
+Repeated queries (agent retries, multi-step plans) are served from a short-lived
+LRU result cache (`SEARCH_CACHE_TTL`/`SEARCH_CACHE_SIZE`, set either to 0 to
+disable) — the pipeline is deterministic for a fixed index, and the TTL bounds
+staleness so fresh index/usage state still surfaces within seconds.
 
 The sparse encoder itself is selectable with `SPARSE`. The default `tf` is
 stateless term-frequency (no corpus state, nothing to coordinate). `bm25` is the

@@ -85,6 +85,12 @@ type Config struct {
 	// to the requested top-k.
 	RerankPool int
 
+	// SearchCacheTTL (seconds) and SearchCacheSize bound the query-result cache.
+	// TTL or size <= 0 disables it. The TTL caps how stale a cached result can be
+	// relative to fresh index/usage state.
+	SearchCacheTTL  int
+	SearchCacheSize int
+
 	// Trust scorer selection (index-time): "heuristic" (default), "llm", "none".
 	Trust string
 	// TrustWeight (search-time) is how much the stored trust prior influences
@@ -152,6 +158,8 @@ func Load() Config {
 		BM25B:           envFloat("BM25_B", sparse.DefaultB),
 		Reranker:        env("RERANKER", "lexical"),
 		RerankPool:      envInt("RERANK_POOL", 30),
+		SearchCacheTTL:  envInt("SEARCH_CACHE_TTL", 60),
+		SearchCacheSize: envInt("SEARCH_CACHE_SIZE", 512),
 
 		Trust:          env("TRUST", "heuristic"),
 		TrustWeight:    envFloat("TRUST_WEIGHT", 0.15),
@@ -368,17 +376,19 @@ func (c Config) NewSearchService() (*search.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &search.Service{
-		Embedder:    emb,
-		Sparse:      c.NewSparseEncoder(),
-		Store:       st,
-		Reranker:    rr,
+	svc := &search.Service{
+		Embedder:       emb,
+		Sparse:         c.NewSparseEncoder(),
+		Store:          st,
+		Reranker:       rr,
 		Hybrid:         c.Hybrid,
 		Pool:           c.RerankPool,
 		TrustWeight:    c.TrustWeight,
 		UsageWeight:    c.UsageWeight,
 		CoverageWeight: c.CoverageWeight,
-	}, nil
+	}
+	svc.EnableCache(time.Duration(c.SearchCacheTTL)*time.Second, c.SearchCacheSize)
+	return svc, nil
 }
 
 // NewUsageRecorder builds the flywheel recorder (in-memory, persisted to
