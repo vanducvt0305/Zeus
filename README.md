@@ -334,6 +334,23 @@ make eval            # index fixtures + score, with the misses listed
 make eval-compare    # ablation: dense-only → +hybrid → +hybrid+rerank
 ```
 
+The default profile uses the offline `hash` embedder — handy for a zero-setup,
+reproducible baseline, but it is **lexical only**, so the features that bridge the
+query/document *vocabulary* gap (LLM/heuristic enrichment, BM25's IDF, semantic
+matching) look weaker than they are. To measure those, run the **semantic
+profile** against a real embedding model (defaults to a local Ollama running
+`nomic-embed-text`; override `EMBED_*` for any OpenAI-compatible endpoint):
+
+```bash
+make eval-semantic              # score with a real embedder
+make eval-semantic-enrichment   # ablation: no enrichment → + heuristic (semantic)
+```
+
+This is where enrichment earns its keep: under a semantic embedder the synthetic
+example queries and task language move results, whereas under the `hash` embedder
+they are roughly neutral. (Numbers depend on the chosen model, so they aren't
+checked in here.)
+
 Ablation on the fixtures (offline `hash` embedder + heuristic enrichment), each
 stage added on top of the previous:
 

@@ -1,4 +1,4 @@
-.PHONY: build server indexer eval eval-compare qdrant-up qdrant-down index index-tools index-github tidy test clean
+.PHONY: build server indexer eval eval-compare eval-semantic eval-semantic-enrichment qdrant-up qdrant-down index index-tools index-github tidy test clean
 
 build:
 	go build -o bin/server ./cmd/server
@@ -44,6 +44,30 @@ eval-compare: build
 	@echo "1) dense-only, no rerank :"; QDRANT_COLLECTION=eval_ablation HYBRID=false RERANKER=none    ./bin/eval | grep -E "Hit@1|Recall|MRR|nDCG"
 	@echo "2) +hybrid (dense+sparse):"; QDRANT_COLLECTION=eval_ablation HYBRID=true  RERANKER=none    ./bin/eval | grep -E "Hit@1|Recall|MRR|nDCG"
 	@echo "3) +hybrid +rerank       :"; QDRANT_COLLECTION=eval_ablation HYBRID=true  RERANKER=lexical ./bin/eval | grep -E "Hit@1|Recall|MRR|nDCG"
+
+# Semantic eval: score with a real embedding model instead of the offline hash
+# embedder. The hash embedder is lexical-only, so enrichment's synthetic-query
+# language, BM25's IDF, and semantic matching all look weaker than they are — this
+# profile is where those gains actually show. Defaults to a local Ollama running
+# nomic-embed-text; override EMBED_* for any OpenAI-compatible /embeddings
+# endpoint (OpenAI, Voyage, TEI). Needs the embedder reachable AND Qdrant up.
+EMBED_BASE_URL ?= http://localhost:11434/v1
+EMBED_MODEL    ?= nomic-embed-text
+EMBED_DIM      ?= 768
+SEMANTIC_ENV = EMBEDDER=openai EMBED_BASE_URL=$(EMBED_BASE_URL) EMBED_MODEL=$(EMBED_MODEL) EMBED_DIM=$(EMBED_DIM)
+
+eval-semantic: build
+	@$(SEMANTIC_ENV) QDRANT_COLLECTION=eval_semantic ./bin/eval -index -fails
+
+# Enrichment ablation under the semantic embedder — the comparison the offline
+# hash embedder can't show (enrichment is ~neutral there). Enrichment happens at
+# index time, so each row reindexes its own collection. Add a third row with
+# ENRICHER=llm and LLM_* set to measure LLM capability cards.
+eval-semantic-enrichment: build
+	@$(SEMANTIC_ENV) ENRICHER=none      QDRANT_COLLECTION=eval_sem_none ./bin/eval -index >/dev/null 2>&1
+	@$(SEMANTIC_ENV) ENRICHER=heuristic QDRANT_COLLECTION=eval_sem_heur ./bin/eval -index >/dev/null 2>&1
+	@echo "no enrichment :"; $(SEMANTIC_ENV) QDRANT_COLLECTION=eval_sem_none ./bin/eval | grep -E "Hit@1|Recall|MRR|nDCG"
+	@echo "+ heuristic   :"; $(SEMANTIC_ENV) QDRANT_COLLECTION=eval_sem_heur ./bin/eval | grep -E "Hit@1|Recall|MRR|nDCG"
 
 tidy:
 	go mod tidy
